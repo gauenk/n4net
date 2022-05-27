@@ -24,6 +24,9 @@ import torch as th
 import numpy as np
 from einops import rearrange,repeat
 
+# -- data --
+import data_hub
+
 # -- package imports [to test] --
 import n4net
 
@@ -71,12 +74,18 @@ class TestSameLidia(unittest.TestCase):
         return burst
 
     def test_same_lidia(self):
+
         # -- params --
-        # name = "davis_baseball_64x64"
-        name = "davis_salsa"
         sigma = 50.
         device = "cuda:0"
         ps = 5
+        vid_set = "toy"
+        vid_name = "text_tourbus"
+
+        # -- video --
+        vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
+        clean = data_hub.load_video(vid_cfg)[:3,:,:96,:128]
+        clean = th.from_numpy(clean).contiguous().to(device)
 
         # -- set seed --
         seed = 123
@@ -87,8 +96,6 @@ class TestSameLidia(unittest.TestCase):
         for train in [True,False]:
 
             # -- get data --
-            clean = self.load_burst(name).to(device)[:3,:,:96,:128]
-            clean = clean.contiguous()
             noisy = clean + sigma * th.randn_like(clean)
             im_shape = noisy.shape
 
@@ -103,6 +110,8 @@ class TestSameLidia(unittest.TestCase):
             deno_n4 = deno_n4.detach()
 
             # -- test --
+            print("deno_n4.shape: ",deno_n4.shape)
+            print("deno_steps.shape: ",deno_steps.shape)
             error = th.sum((deno_n4 - deno_steps)**2).item()
             error < 1e-10
 

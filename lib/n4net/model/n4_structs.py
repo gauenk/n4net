@@ -9,7 +9,10 @@ from .pdn_structs import PatchDenoiseNet
 # -- neural network --
 import torch.nn as nn
 import torch.nn.functional as nn_func
-from torch.nn.functional import fold,unfold
+from torch.nn.functional import fold
+
+# -- diff. non-local search --
+import dnls
 
 # -- separate logic --
 from . import nn_impl
@@ -20,11 +23,27 @@ from n4net.utils import clean_code
 # -- misc imports --
 from .misc import crop_offset
 
-@clean_code.add_methods_from(nn_impl)
-class NoisyNearestNeighborNet(nn.Module):
+class N4Net(nn.Module):
 
     def __init__(self, pad_offs, arch_opt):
-        super(NoisyNearestNeighborNet, self).__init__()
+        super(N4Net, self).__init__()
+        self.arch_opt = arch_opt
+        self.pad_offs = pad_offs
+        self.net1 = N4Step(pad_offs, arch_opt)
+        self.net2 = N4Step(pad_offs, arch_opt)
+        self.net3 = N4Step(pad_offs, arch_opt)
+
+    def forward(self,data,sigma):
+        x = self.net1(data,sigma)
+        # x = self.net2(x,sigma)
+        # x = self.net3(x,sigma)
+        return x
+
+@clean_code.add_methods_from(nn_impl)
+class N4Step(nn.Module):
+
+    def __init__(self, pad_offs, arch_opt):
+        super(N4Step, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
 
@@ -53,8 +72,13 @@ class NoisyNearestNeighborNet(nn.Module):
     #
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-    def forward(self, noisy, sigma, train=True, srch_img=None, srch_flows=None,
+    def forward(self, noisy, sigma, train=False, srch_img=None, srch_flows=None,
                 rescale=True, ws=29, wt=0):
+        """
+
+        Primary Network Backbone
+
+        """
 
         #
         # -- Prepare --
@@ -127,7 +151,7 @@ class NoisyNearestNeighborNet(nn.Module):
         pdim = image_dn.shape[-1]
         image_dn = image_dn * patch_weights
         ones_tmp = th.ones(1, 1, pdim, device=image_dn.device)
-        patch_weights = (patch_weights * ones_tmp).transpose(2, 1)
+        wpatches = (patch_weights * ones_tmp).transpose(2, 1)
         image_dn = image_dn.transpose(2, 1)
 
         # -- prepare gather --
@@ -140,11 +164,20 @@ class NoisyNearestNeighborNet(nn.Module):
 
         # -- fold --
         h,w = params['pixels_h'],params['pixels_w']
-        shape = (t,c,h,w)
-        image_dn = fold(image_dn, (h,w),(ps,ps))
-        patch_cnt = fold(patch_weights, (h,w),(ps,ps))
+        shape = (h,w)
+        image_dn = fold(image_dn,shape,(ps,ps))
+        patch_cnt = fold(wpatches,shape,(ps,ps))
+
+        # # -- prepare --
+        # h,w = params['pixels_h'],params['pixels_w']
+        # shape = (t,c,h,w)
+        # zeros = th.zeros_like(inds[:,:,0],dtype=th.float32,device=inds.device)
+        # image_dn = rearrange(image_dn,'t (c h w) n -> (t n) 1 1 c h w',h=ps,w=ps)
+        # wpatches = rearrange(wpatches,'t (c h w) n -> (t n) 1 1 c h w',h=ps,w=ps)
+
+        # # -- process --
         # image_dn,_ = dnls.simple.gather.run(image_dn, zeros, inds, shape=shape)
-        # patch_cnt,_ = dnls.simple.gather.run(wpatch, zeros, inds, shape=shape)
+        # patch_cnt,_ = dnls.simple.gather.run(wpatches, zeros, inds, shape=shape)
 
         # -- crop --
         row_offs = min(ps - 1, params['patches_h'] - 1)

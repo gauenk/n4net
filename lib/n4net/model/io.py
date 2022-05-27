@@ -9,7 +9,7 @@ import torch as th
 import numpy as np
 
 # -- modules --
-from .n4_structs import NoisyNearestNeighborNet,ArchitectureOptions
+from .n4_structs import N4Net,N4Step,ArchitectureOptions
 
 # -- misc imports --
 from .misc import get_default_config,calc_padding,select_sigma
@@ -22,7 +22,7 @@ def load_model(sigma):
 
     # -- init model --
     pad_offs, total_pad = calc_padding(arch_cfg)
-    nl_denoiser = NoisyNearestNeighborNet(pad_offs, arch_cfg).to(cfg.device)
+    nl_denoiser = N4Step(pad_offs, arch_cfg).to(cfg.device)
     nl_denoiser.cuda()
 
     # -- load weights --
