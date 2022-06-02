@@ -112,7 +112,7 @@ class TestSameLidia(unittest.TestCase):
 
             # -- test --
             error = th.sum((deno_n4 - deno_steps)**2).item()
-            error < 1e-10
+            assert error < 1e-10
 
     def test_batched(self):
 
@@ -134,7 +134,7 @@ class TestSameLidia(unittest.TestCase):
         np.random.seed(seed)
 
         # -- over training --
-        for train in [True]:#,False]:
+        for train in [False]:#,False]:
 
             # -- get data --
             noisy = clean + sigma * th.randn_like(clean)
@@ -157,6 +157,8 @@ class TestSameLidia(unittest.TestCase):
             deno_n4 = deno_n4.detach()
 
             # -- save --
+            print("deno_n4.max(): ",deno_n4.max())
+            print("deno_steps.max(): ",deno_steps.max())
             deno_n4 /= deno_n4.max()
             deno_steps /= deno_steps.max()
             dnls.testing.data.save_burst(deno_n4,SAVE_DIR,"batched")
@@ -164,6 +166,6 @@ class TestSameLidia(unittest.TestCase):
 
             # -- test --
             error = th.sum((deno_n4 - deno_steps)**2).item()
-            error < 1e-10
+            assert error < 1e-10
 
 
