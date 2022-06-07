@@ -106,7 +106,7 @@ class SeparableFcNet(nn.Module):
         x_out = self.sep_part1_s0(wpatches)
         y_out = self.agg0_pre(x_out)
         y_out,fold_out = self.agg0(y_out, dists, inds, h, w, both=True)
-        print("[stnd] fold_out0.shape: ",fold_out.shape)
+        # print("[stnd] fold_out0.shape: ",fold_out.shape)
         y_out = self.agg0_post(y_out)
         return y_out,x_out,fold_out
 
@@ -114,7 +114,7 @@ class SeparableFcNet(nn.Module):
         x_out = self.sep_part1_s1(wpatches)
         y_out = self.agg1_pre(x_out) / weights
         y_out,fold_out = self.agg1(y_out, dists, inds, h, w, both=True)
-        print("[stnd] fold_out1.shape: ",fold_out.shape)
+        # print("[stnd] fold_out1.shape: ",fold_out.shape)
         y_out = self.agg1_post(weights * y_out)
         return y_out,x_out,fold_out
 

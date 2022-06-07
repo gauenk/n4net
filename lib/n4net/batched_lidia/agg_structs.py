@@ -38,27 +38,27 @@ class Aggregation0(nn.Module):
 
         # -- normalize --
         top,left,btm,right = fold_nl.coords
-        vid /= wvid
-        print(vid[0,0,:5,:5])
+        # vid /= wvid
         # vid[:,:,top:btm,left:right] /= wvid[:,:,top:btm,left:right]
         # dnls.testing.data.save_burst(xg,"./output/tests/","gt_agg0")
 
         return vid
 
-    def batched_fwd_b(self, vid, wvid, inds, scatter_nl):
+    def batched_fwd_b(self, vid, inds, scatter_nl):
 
         # -- scatter --
-        print("[b]")
-        print(vid[0,0,:5,:5])
-        print(vid.shape)
-        print("inds.shape: ",inds.shape)
+        # print("[b]")
+        # print(vid[0,0,:5,:5])
+        # print(vid.shape)
+        # print("inds.shape: ",inds.shape)
         inds[:,:,1] += 2
         inds[:,:,2] += 2
         # y_out = scatter_nl(vid,inds)
         y_out = dnls.simple.scatter.run(vid.detach(),inds,5,1,dilation=1)
         inds[:,:,1] -= 2
         inds[:,:,2] -= 2
-        y_out = rearrange(y_out,'n 1 pt c h w -> n 1 1 (pt c h w)')
+        # y_out = rearrange(y_out,'n 1 pt c h w -> n 1 1 (pt c h w)')
+        y_out = rearrange(y_out,'n 1 pt c h w -> 1 n 1 (pt c h w)')
         return y_out
 
     def forward(self, x, nlDists, nlInds, pixels_h, pixels_w, both=False):
@@ -89,7 +89,8 @@ class Aggregation0(nn.Module):
 
         # -- scatter [or unfold] --
         x = dnls.simple.scatter.run(x,_nlInds,ps,pt,dilation=1)
-        x = rearrange(x,'(t p) 1 pt c h w -> t p 1 (pt c h w)',t=t)
+        # x = rearrange(x,'(t p) 1 pt c h w -> t p 1 (pt c h w)',t=t)
+        x = rearrange(x,'n 1 pt c h w -> 1 n 1 (pt c h w)')
         if both: return x,xg
         else: return x
 
@@ -133,12 +134,12 @@ class Aggregation1(nn.Module):
 
         # -- normalize --
         top,left,btm,right = fold_nl.coords
-        vid /= wvid
+        # vid /= wvid
         # vid[:,:,top:btm,left:right] /= wvid[:,:,top:btm,left:right]
 
         return vid
 
-    def batched_fwd_b(self, vid, wvid, inds, scatter_nl):
+    def batched_fwd_b(self, vid, inds, scatter_nl):
 
         # -- filter --
         t,c,h,w = vid.shape
@@ -147,14 +148,15 @@ class Aggregation1(nn.Module):
 
         # -- scatter --
         # y_out = scatter_nl(vid,inds)
-        print("vid.shape: ",vid.shape)
+        # print("vid.shape: ",vid.shape)
         inds[:,:,1] += 4
         inds[:,:,2] += 4
         y_out = dnls.simple.scatter.run(vid.detach(),inds,5,1,dilation=2)
         inds[:,:,1] -= 4
         inds[:,:,2] -= 4
 
-        y_out = rearrange(y_out,'n 1 pt c h w -> n 1 1 (pt c h w)')
+        # y_out = rearrange(y_out,'n 1 pt c h w -> n 1 1 (pt c h w)')
+        y_out = rearrange(y_out,'n 1 pt c h w -> 1 n 1 (pt c h w)')
         return y_out
 
     def forward(self, x, nlDists, nlInds, pixels_h, pixels_w, both=False):
@@ -181,8 +183,8 @@ class Aggregation1(nn.Module):
         shape = (t,3,pixels_h,pixels_w)
         zeros = th.zeros_like(_nlDists)
         x,wx = dnls.simple.gather.run(x,zeros,_nlInds,shape=shape,dilation=2)
-        x = x / wx
-        xg = x
+        # x = x / wx
+        # xg = x
 
         # -- filter --
         t,c,h,w = x.shape
@@ -191,7 +193,8 @@ class Aggregation1(nn.Module):
 
         # -- scatter --
         x = dnls.simple.scatter.run(x,_nlInds,ps,pt,dilation=2)
-        x = rearrange(x,'(t p) 1 pt c h w -> t p 1 (pt c h w)',t=t)
+        # x = rearrange(x,'(t p) 1 pt c h w -> t p 1 (pt c h w)',t=t)
+        x = rearrange(x,'n 1 pt c h w -> 1 n 1 (pt c h w)',t=t)
 
         if both: return x,xg
         else: return x

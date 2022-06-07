@@ -68,7 +68,7 @@ def get_npatches(image, patch_w, neigh_pad):
     return patches_h,patches_w
 
 def get_image_params(image, patch_w, neigh_pad):
-    print("image.shape: ",image.shape)
+    # print("image.shape: ",image.shape)
     im_params = dict()
     im_params['batches'] = image.shape[0]
     im_params['pixels_h'] = image.shape[2] - 2 * neigh_pad

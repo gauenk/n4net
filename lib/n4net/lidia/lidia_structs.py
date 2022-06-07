@@ -86,7 +86,6 @@ class LIDIA(nn.Module):
         dists0 = output0[1]
         inds0 = output0[2]
         params0 = output0[3]
-        print("[stnd] patches0.shape: ",patches0.shape)
 
         # -- [nn1 search]  --
         output1 = self.run_nn1(noisy,srch_img,srch_flows,train,ws=ws,wt=wt)
@@ -115,6 +114,7 @@ class LIDIA(nn.Module):
         #
 
         deno = self.run_parts_final(deno,patches_w,inds0,params0)
+        assert th.any(th.isnan(deno)).item() is False
 
         #
         # -- Format --
@@ -126,7 +126,6 @@ class LIDIA(nn.Module):
         if rescale:
             deno[...]  = 255.*(deno  * 0.5 + 0.5) # normalize
             noisy[...] = 255.*(noisy * 0.5 + 0.5) # restore
-
         return deno
 
     def run_parts_final(self,image_dn,patch_weights,inds,params):
@@ -139,7 +138,7 @@ class LIDIA(nn.Module):
         ones_tmp = th.ones(1, 1, pdim, device=image_dn.device)
         wpatches = (patch_weights * ones_tmp).transpose(2, 1)
         image_dn = image_dn.transpose(2, 1)
-        print("image_dn.shape: ",image_dn.shape)
+        # print("image_dn.shape: ",image_dn.shape)
 
         # -- prepare gather --
         t,hw,k,tr = inds.shape
@@ -152,7 +151,7 @@ class LIDIA(nn.Module):
         # -- fold --
         h,w = params['pixels_h'],params['pixels_w']
         shape = (h,w)
-        print("final fold: ",h,w)
+        # print("final fold: ",h,w)
         image_dn = fold(image_dn,shape,(ps,ps))
         patch_cnt = fold(wpatches,shape,(ps,ps))
 
@@ -168,12 +167,16 @@ class LIDIA(nn.Module):
         # patch_cnt,_ = dnls.simple.gather.run(wpatches, zeros, inds, shape=shape)
 
         # -- crop --
-        print(params['patches_h'])
+        # print(params['patches_h'])
         row_offs = min(ps - 1, params['patches_h'] - 1)
         col_offs = min(ps - 1, params['patches_w'] - 1)
+        # print("row_offs,col_offs: ",row_offs,col_offs)
+        # print("[stnd] image_dn.shape: ",image_dn.shape)
+        # image_dn = image_dn[:,:,4:-4,4:-4]
+        # image_dn /= patch_cnt[:,:,4:-4,4:-4]
         image_dn = crop_offset(image_dn, (row_offs,), (col_offs,))
         image_dn /= crop_offset(patch_cnt, (row_offs,), (col_offs,))
-        print("image_dn.shape: ",image_dn.shape)
+        # print("[stnd-post] image_dn.shape: ",image_dn.shape)
 
         return image_dn
 

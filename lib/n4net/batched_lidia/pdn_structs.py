@@ -22,11 +22,11 @@ class PatchDenoiseNet(nn.Module):
                                       patch_w=patch_w,
                                       ver_size=ver_size)
         # -- sep 0 --
-        self.weights_net0 = FcNet()
+        self.weights_net0 = FcNet("fc0")
         self.alpha0 = nn.Parameter(th.tensor((0.5,), dtype=th.float32))
 
         # -- sep 1 --
-        self.weights_net1 = FcNet()
+        self.weights_net1 = FcNet("fc1")
         self.alpha1 = nn.Parameter(th.tensor((0.5,), dtype=th.float32))
 
         # -- combo --
@@ -78,55 +78,58 @@ class PatchDenoiseNet(nn.Module):
     def batched_fwd_a0(self,patches_n,dist,inds,fold_nl,wfold_nl):
         weights = self.weights_net0(th.exp(-self.alpha0.abs() * dist))
         weights = weights.unsqueeze(-1)
-        wpatches = patches_n[None,:] * weights
+        wpatches = patches_n * weights
         # h,w = params0['pixels_h'],params0['pixels_w']
         vid,x_out = self.sep_net.run_batched_sep0_a(wpatches,inds,
                                               fold_nl,wfold_nl)
         # vid,wvid = self.sep_net.run_batched_sep0_a(patches_n[None,:],inds,
         #                                            fold_nl,wfold_nl)
 
-        pairs = {"sep0":x_out}
-        for key,val in pairs.items():
-            print("Key: %s" % key)
-            print("val.shape: ",val.shape)
-            if "wp" in key:
-                val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
-            elif "sep" in key:
-                val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
-            fn = "gt_%s.pt" % key
-            gt_val = th.load(fn)
-            print(gt_val.shape)
-            print(val.shape)
-            error = th.sum((val - gt_val)**2).item()
-            assert error < 1e-10
+        # pairs = {"sep0":x_out}
+        # for key,val in pairs.items():
+        #     print("Key: %s" % key)
+        #     print("val.shape: ",val.shape)
+        #     if "wp" in key:
+        #         val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
+        #     elif "sep" in key:
+        #         val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
+        #     fn = "gt_%s.pt" % key
+        #     gt_val = th.load(fn)
+        #     print(gt_val.shape)
+        #     print(val.shape)
+        #     error = th.sum((val - gt_val)**2).item()
+        #     assert error < 1e-10
 
         return vid
 
     def batched_fwd_a1(self,patches_n,dist,inds,fold_nl,wfold_nl):
         weights = self.weights_net1(th.exp(-self.alpha1.abs() * dist))
         weights = weights.unsqueeze(-1)
+        # print("weights.shape: ",weights.shape)
         wpatches = patches_n * weights
+        # print("wpatches.shape: ",wpatches.shape)
         weights = weights[:, :, 0:1, :]
+        # print("weights.shape: ",weights.shape)
         # h,w = params1['pixels_h'],params1['pixels_w']
         vid,x_out = self.sep_net.run_batched_sep1_a(wpatches,weights,inds,
                                                      fold_nl,wfold_nl)
         # vid,wvid = self.sep_net.run_batched_sep1_a(patches_n[None,:],weights,inds,
         #                                            fold_nl,wfold_nl)
 
-        pairs = {"sep1":x_out}
-        for key,val in pairs.items():
-            print("Key: %s" % key)
-            print("val.shape: ",val.shape)
-            if "wp" in key:
-                val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
-            elif "sep" in key:
-                val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
-            fn = "gt_%s.pt" % key
-            gt_val = th.load(fn)
-            print(gt_val.shape)
-            print(val.shape)
-            error = th.sum((val - gt_val)**2).item()
-            assert error < 1e-10
+        # pairs = {"sep1":x_out}
+        # for key,val in pairs.items():
+        #     print("Key: %s" % key)
+        #     print("val.shape: ",val.shape)
+        #     if "wp" in key:
+        #         val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
+        #     elif "sep" in key:
+        #         val = rearrange(val,'1 (t m) k d -> t m k d',t=3)
+        #     fn = "gt_%s.pt" % key
+        #     gt_val = th.load(fn)
+        #     print(gt_val.shape)
+        #     print(val.shape)
+        #     error = th.sum((val - gt_val)**2).item()
+        #     assert error < 1e-10
 
         return vid
 
@@ -139,7 +142,7 @@ class PatchDenoiseNet(nn.Module):
 
         weights0 = self.weights_net0(th.exp(-self.alpha0.abs() * dist0))
         weights0 = weights0.unsqueeze(-1)
-        wpatches0 = patches_n0[None,:] * weights0
+        wpatches0 = patches_n0 * weights0
         # h,w = params0['pixels_h'],params0['pixels_w']
         vid0,sep0 = self.sep_net.run_batched_sep0_a(wpatches0,inds0,
                                                fold_nl0,wfold_nl0)
@@ -157,13 +160,13 @@ class PatchDenoiseNet(nn.Module):
         # h,w = params1['pixels_h'],params1['pixels_w']
         # vid1,wvid1 = self.sep_net.run_batched_sep1_a(wpatches1,weights1,inds1,
         #                                              fold_nl1,wfold_nl1)
-        vid1 = self.sep_net.run_batched_sep1_a(patches_n1[None,:],weights1,inds1,
+        vid1 = self.sep_net.run_batched_sep1_a(patches_n1,weights1,inds1,
                                                fold_nl1,wfold_nl1)
 
         return vid0,vid1
 
-    def batched_fwd_b(self,patches_n0,dist0,inds0,vid0,wvid0,scatter_nl0,
-                      patches_n1,dist1,inds1,vid1,wvid1,scatter_nl1):
+    def batched_fwd_b(self,patches_n0,dist0,inds0,vid0,scatter_nl0,
+                      patches_n1,dist1,inds1,vid1,scatter_nl1):
 
         #
         # -- Sep @ 0 --
@@ -172,7 +175,7 @@ class PatchDenoiseNet(nn.Module):
         weights0 = self.weights_net0(th.exp(-self.alpha0.abs() * dist0))
         weights0 = weights0.unsqueeze(-1)
         wpatches0 = patches_n0 * weights0
-        agg0,sep0 = self.sep_net.run_batched_sep0_b(wpatches0,vid0,wvid0,
+        agg0,sep0 = self.sep_net.run_batched_sep0_b(wpatches0,vid0,
                                                     inds0,scatter_nl0)
         #
         # -- Sep @ 1 --
@@ -183,7 +186,7 @@ class PatchDenoiseNet(nn.Module):
         wpatches1 = patches_n1 * weights1
         weights1 = weights1[:, :, 0:1, :]
         # h,w = params1['pixels_h'],params1['pixels_w']
-        agg1,sep1 = self.sep_net.run_batched_sep1_b(wpatches1,weights1,vid1,wvid1,
+        agg1,sep1 = self.sep_net.run_batched_sep1_b(wpatches1,weights1,vid1,
                                                     inds1,scatter_nl1)
 
         # -- check --
@@ -200,10 +203,10 @@ class PatchDenoiseNet(nn.Module):
         # th.save(sep1,"bt_sep1.pt")
         # th.save(agg1,"bt_agg1.pt")
 
-        sep0 = th.load("gt_sep0.pt")
-        agg0 = th.load("gt_agg0.pt")
-        sep1 = th.load("gt_sep1.pt")
-        agg1 = th.load("gt_agg1.pt")
+        # sep0 = th.load("gt_sep0.pt")
+        # agg0 = th.load("gt_agg0.pt")
+        # sep1 = th.load("gt_sep1.pt")
+        # agg1 = th.load("gt_agg1.pt")
 
         # pairs = {"wp0":wpatches0,"wp1":wpatches1,
         #          "sep0":sep0,"agg0":agg0,"agg1":agg1,"sep1":sep1}
@@ -247,13 +250,13 @@ class PatchDenoiseNet(nn.Module):
         # print("sep1.shape: ",sep1.shape)
         inputs = th.cat((sep0, sep1, agg0, agg1), dim=-2)
 
-        print("inputs.shape: ",inputs.shape)
+        # print("inputs.shape: ",inputs.shape)
         # inputs = rearrange(inputs,'(t n) 1 f d -> t n f d',t=3)
         # print("inputs.shape: ",inputs.shape)
         noise = self.sep_net.sep_part2(inputs)
 
         # print("patches_n0.shape: ",patches_n0.shape)
-        patches_n0 = rearrange(patches_n0,'(t n) k d -> t n k d',t=3)
+        # patches_n0 = rearrange(patches_n0,'(t n) k d -> t n k d',t=3)
         # print("patches_n0.shape: ",patches_n0.shape)
         # print("noise.shape: ",noise.shape)
         deno,patches_w = self.run_batched_pdn_final(patches_n0,noise)
@@ -274,10 +277,4 @@ class PatchDenoiseNet(nn.Module):
         patch_exp_weights = (patches_no_mean ** 2).mean(dim=-1, keepdim=True)
         patch_weights = th.exp(-self.beta.abs() * patch_exp_weights)
         return patches_dn,patch_weights
-
-        # patches_dn = patches_n0[:, :, [0], :] - noise[:,:]
-        # patches_no_mean = patches_dn - patches_dn.mean(dim=-1, keepdim=True)
-        # patch_exp_weights = (patches_no_mean ** 2).mean(dim=-1, keepdim=True)
-        # patch_weights = th.exp(-self.beta.abs() * patch_exp_weights)
-        # return patches_dn,patch_weights
 

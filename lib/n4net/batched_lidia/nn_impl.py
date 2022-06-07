@@ -60,10 +60,10 @@ def run_nn0(self,image_n,queryInds,scatter_nl,
     queryInds[...,2] += sw
 
     # -- search --
-    print(queryInds[:3])
-    print(queryInds[-3:])
-    print("image_n0.shape: ",image_n0.shape)
-    print("img_nn0.shape: ",img_nn0.shape)
+    # print(queryInds[:3])
+    # print(queryInds[-3:])
+    # print("image_n0.shape: ",image_n0.shape)
+    # print("img_nn0.shape: ",img_nn0.shape)
     k,ps,pt,chnls = 14,self.patch_w,1,1
     nlDists,nlInds = dnls.simple.search.run(img_nn0,queryInds,flows,
                                             k,ps,pt,ws,wt,chnls)
@@ -80,13 +80,13 @@ def run_nn0(self,image_n,queryInds,scatter_nl,
     t,c,h,w = image_n0.shape
     # patches = dnls.simple.scatter.run(image_n0,nlInds,self.patch_w)
     patches = scatter_nl(image_n0,nlInds)
-    ishape = 'p k 1 c h w -> p k (c h w)'
+    ishape = 'p k 1 c h w -> 1 p k (c h w)'
     patches = rearrange(patches,ishape)
 
     # -- append anchor patch spatial variance --
     d = patches.shape[-1]
     nlDists[:,:-1] = nlDists[...,1:]
-    nlDists[:,-1] = patches[:,0,:].std(dim=-1).pow(2)*d # patch var
+    nlDists[:,-1] = patches[0,:,0,:].std(dim=-1).pow(2)*d # patch var
 
     # -- remove padding --
     nlInds[...,1] -= sh
@@ -163,13 +163,13 @@ def run_nn1(self,image_n,queryInds,scatter_nl,
     # nlInds = rearrange(nlInds,'(t h w) k tr -> t h w k tr',t=t,h=hp)
     # ishape = '(t ih iw) k 1 c h w -> t ih iw k (c h w)'
     # patches = rearrange(patches,ishape,ih=hp,iw=wp)
-    ishape = 'p k 1 c h w -> p k (c h w)'
+    ishape = 'p k 1 c h w -> 1 p k (c h w)'
     patches = rearrange(patches,ishape)
 
     # -- patch variance --
     d = patches.shape[-1]
     nlDists[:,:-1] = nlDists[...,1:]
-    nlDists[:,-1] = patches[:,0,:].std(-1)**2*d # patch_var
+    nlDists[:,-1] = patches[0,:,0,:].std(-1)**2*d # patch_var
 
     # -- centering inds --
     t,c,h1,w1 = image_n1.shape

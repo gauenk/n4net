@@ -55,9 +55,9 @@ def run_nn0(self,image_n,srch_img=None,flows=None,train=False,ws=29,wt=0):
     hp,wp = params['patches_h'],params['patches_w']
     queryInds = th.arange(t*hp*wp,device=device).reshape(-1,1,1,1)
     queryInds = get_3d_inds(queryInds,hp,wp)[:,0]
-    print("[stdn] image_n0.shape: ",image_n0.shape)
-    print("[stdn] image_nn0.shape: ",img_nn0.shape)
-    print("[stdn] hp,wp: ",hp,wp)
+    # print("[stdn] image_n0.shape: ",image_n0.shape)
+    # print("[stdn] image_nn0.shape: ",img_nn0.shape)
+    # print("[stdn] hp,wp: ",hp,wp)
 
     # -- add padding --
     t,c,h0,w0 = image_n0.shape
@@ -77,7 +77,7 @@ def run_nn0(self,image_n,srch_img=None,flows=None,train=False,ws=29,wt=0):
     # -- indexing patches --
     t,c,h,w = image_n0.shape
     patches = dnls.simple.scatter.run(image_n0,nlInds,self.patch_w)
-    print("[0] patches.shape: ",patches.shape)
+    # print("[0] patches.shape: ",patches.shape)
     ishape = '(t p) k 1 c h w -> t p k (c h w)'
     patches = rearrange(patches,ishape,t=t)
 

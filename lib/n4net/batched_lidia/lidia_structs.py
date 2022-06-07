@@ -92,23 +92,26 @@ class BatchedLIDIA(nn.Module):
         _,_,h0,w0 = i0_shape
         _,_,h1,w1 = i1_shape
         _,_,h,w = noisy.shape
-        # # h0,w0 = h+2*(ps-1),w+2*(ps-1)
-        h0,w0 = 104,104
-        h1,w1 = 108,108
+        dil = 1
+        pad = ps//2 + dil*(ps//2)
+        h0,w0 = h+2*pad,w+2*pad
+        dil = 2
+        pad = ps//2 + dil*(ps//2)
+        h1,w1 = h+2*pad,w+2*pad
+        # print(2*dil*(ps-1))
 
         # -- get coords for fill image: (top,left,btm,right) --
         hp,wp = h+2*(ps//2),w+2*(ps//2)
         hpad,wpad = (h0 - hp)//2,(w0 - wp)//2
         coords0 = (hpad,wpad,hp+hpad,wp+wpad)
-        coords0 = (hpad,wpad,hp+hpad,wp+wpad)
         hpad,wpad = (h1 - hp)//2,(w1 - wp)//2
         coords1 = (hpad,wpad,hp+hpad,wp+wpad)
         vshape0 = (t,c,h0,w0)
         vshape1 = (t,c,h1,w1)
-        print(coords0)
-        print(coords1)
-        print(vshape0)
-        print(vshape1)
+        # print(coords0)
+        # print(coords1)
+        # print(vshape0)
+        # print(vshape1)
 
         #
         # -- First Step --
@@ -118,6 +121,9 @@ class BatchedLIDIA(nn.Module):
         t,c,h,w = noisy.shape
         nqueries = t * ((hp-1)//stride+1) * ((wp-1)//stride+1)
         if batch_size <= 0: batch_size = nqueries
+        batch_size = 128
+        # batch_size = nqueries//4
+        # batch_size = nqueries//2
         nbatches = (nqueries - 1)//batch_size+1
 
         # -- Scatter/Fold Fxns --
@@ -144,14 +150,10 @@ class BatchedLIDIA(nn.Module):
         # -- unpack --
         vid0,wvid0 = p0_fxns.fold_nl.vid,p0_fxns.wfold_nl.vid
         vid1,wvid1 = p1_fxns.fold_nl.vid,p1_fxns.wfold_nl.vid
+        vid0 = vid0 / wvid0
+        vid1 = vid1 / wvid1
 
         # -- normalize --
-        # args = th.where(wvid0>0)
-        # vid0_c = vid0.clone()
-        # vid0_c[args] /= wvid0[args]
-        # args = th.where(wvid1>0)
-        # vid1_c = vid1.clone()
-        # vid1_c[args] /= wvid1[args]
         dnls.testing.data.save_burst(vid0,"./output/tests/","vid0")
         dnls.testing.data.save_burst(vid1,"./output/tests/","vid1")
 
@@ -162,9 +164,11 @@ class BatchedLIDIA(nn.Module):
         assert th.any(th.isnan(wvid1)).item() is False
 
         # -- decl fxns --
-        # coords0 = [2,2,100+2,100+2]
-        fold_nl = dnls.ifold.iFold((t,c,hp,wp),coords0,stride=1,dilation=1)
-        wfold_nl = dnls.ifold.iFold((t,c,hp,wp),coords0,stride=1,dilation=1)
+        coords0 = [0,0,hp,wp]
+        coords0 = [2,2,hp+2,wp+2]
+        _hp,_wp = h+2*(ps-1),w+2*(ps-1)
+        fold_nl = dnls.ifold.iFold((t,c,_hp,_wp),coords0,stride=1,dilation=1)
+        wfold_nl = dnls.ifold.iFold((t,c,_hp,_wp),coords0,stride=1,dilation=1)
         scatter0 = p0_fxns.scatter
         scatter1 = p1_fxns.scatter
 
@@ -227,10 +231,8 @@ class BatchedLIDIA(nn.Module):
             # inds1 = qindex
 
             # -- exec --
-            outs = self.pdn.batched_fwd_b(patches0,dists0,inds0,
-                                          vid0,wvid0,scatter0,
-                                          patches1,dists1,inds1,
-                                          vid1,wvid1,scatter1)
+            outs = self.pdn.batched_fwd_b(patches0,dists0,inds0,vid0,scatter0,
+                                          patches1,dists1,inds1,vid1,scatter1)
             pdeno,patches_w = outs
 
             #
@@ -239,31 +241,16 @@ class BatchedLIDIA(nn.Module):
             assert_nonan(pdeno)
             assert_nonan(patches_w)
 
-            vdeno = self.run_parts_final(pdeno,patches_w,inds0,params0,
-                                         qindex,fold_nl,wfold_nl)
+            self.run_parts_final(pdeno,patches_w,inds0,params0,
+                                 qindex,fold_nl,wfold_nl)
 
         #
         # -- Format --
         #
 
         # -- unpack --
-        # image_dn = fold_nl.vid
-        # patch_cnt = wfold_nl.vid
-        # row_offs = min(ps - 1, params0['patches_h'] - 1)
-        # col_offs = min(ps - 1, params0['patches_w'] - 1)
-        # image_dn = crop_offset(image_dn, (row_offs,), (col_offs,))
-        # image_dn /= crop_offset(patch_cnt, (row_offs,), (col_offs,))
-        # vdeno = image_dn
-        # vdeno = center_crop(fold_nl.vid,(h,w))
-        # wdeno = center_crop(wfold_nl.vid,(h,w))
-        # vdeno /= wdeno
-        # args = th.where(wdeno>0)
-
-        # -- checks --
-        assert th.any(th.isnan(vdeno)).item() is False
-
-        # -- rescale --
-        deno = vdeno
+        deno = self.final_format(fold_nl,wfold_nl,_hp,_wp)
+        assert th.any(th.isnan(deno)).item() is False
 
         # -- normalize for output ---
         deno += means # normalize
@@ -271,84 +258,46 @@ class BatchedLIDIA(nn.Module):
         if rescale:
             deno[...]  = 255.*(deno  * 0.5 + 0.5) # normalize
             noisy[...] = 255.*(noisy * 0.5 + 0.5) # restore
-
         return deno
 
     def run_parts_final(self,image_dn,patch_weights,inds,params,
                         qindex,fold_nl,wfold_nl):
-
-        # -- prepare --
-        c = 3
-        ps = self.patch_w
-
-        # -- tmp corrected --
-        # image_dn = image_dn.transpose(-1,-2)
-        # patch_weights = patch_weights.transpose(-1,-2)
-        print("image_dn.shape: ",image_dn.shape)
-        print("patch_weights.shape: ",patch_weights.shape)
 
         # -- expands wpatches --
         pdim = image_dn.shape[-1]
         image_dn = image_dn * patch_weights
         ones_tmp = th.ones(1, 1, pdim, device=image_dn.device)
         wpatches = (patch_weights * ones_tmp)
-        print("image_dn.shape: ",image_dn.shape)
-        print("wpatches.shape: ",wpatches.shape)
 
         # -- format to fold --
-        # image_dn = image_dn.transpose(-1,-2)
-        # wpatches = wpatches.transpose(-1,-2)
+        ps = self.patch_w
         shape_str = 't n (c h w) -> (t n) 1 1 c h w'
         image_dn = rearrange(image_dn,shape_str,h=ps,w=ps)
         wpatches = rearrange(wpatches,shape_str,h=ps,w=ps)
-
-        # -- prepare gather --
-        # t,hw,k,tr = inds.shape
-        # inds = rearrange(inds[...,0,:],'t p tr -> (t p) 1 tr').clone()
-        # inds = inds[:,[0]]
-
-        # -- inds --
-        # inds[:,:,1] += (ps//2)
-        # inds[:,:,2] += (ps//2)
 
         # -- contiguous --
         image_dn = image_dn.contiguous()
         wpatches = wpatches.contiguous()
 
         # -- fold --
-        h,w = params['pixels_h'],params['pixels_w']
-        shape = (h,w)
-        print("final fold: ",h,w)
+        # h,w = params['pixels_h'],params['pixels_w']
+        # shape = (h,w)
         # image_dn = fold(image_dn,shape,(ps,ps))
         # patch_cnt = fold(wpatches,shape,(ps,ps))
+
+        # -- dnls fold --
         image_dn = fold_nl(image_dn,qindex)
         patch_cnt = wfold_nl(wpatches,qindex)
-        print("image_dn.shape: ",image_dn.shape)
 
-        # # -- prepare --
-        # h,w = params['pixels_h'],params['pixels_w']
-        # shape = (t,c,h,w)
-        # zeros = th.zeros_like(inds[:,:,0],dtype=th.float32,device=inds.device)
-        # image_dn = rearrange(image_dn,'t (c h w) n -> (t n) 1 1 c h w',h=ps,w=ps)
-        # wpatches = rearrange(wpatches,'t (c h w) n -> (t n) 1 1 c h w',h=ps,w=ps)
-
-        # # -- process --
-        # image_dn,_ = dnls.simple.gather.run(image_dn, zeros, inds, shape=shape)
-        # patch_cnt,_ = dnls.simple.gather.run(wpatches, zeros, inds, shape=shape)
-
+    def final_format(self,fold_nl,wfold_nl,hp,wp):
         # -- crop --
-        print(params['patches_h'])
-        row_offs = 2#min(ps - 1, params['patches_h'] - 1)
-        col_offs = 2#min(ps - 1, params['patches_w'] - 1)
-        print(row_offs,col_offs)
-        image_dn /= patch_cnt
-        image_dn = image_dn[:,:,4:,4:]
-        print("[b] image_dn.shape: ",image_dn.shape)
-
-        # image_dn = crop_offset(image_dn, (row_offs,), (col_offs,))
-        # image_dn /= crop_offset(patch_cnt, (row_offs,), (col_offs,))
-        print("image_dn.shape: ",image_dn.shape)
-
+        ps = self.patch_w
+        image_dn = fold_nl.vid
+        patch_cnt = wfold_nl.vid
+        row_offs = min(ps - 1, hp - 1)
+        col_offs = min(ps - 1, wp - 1)
+        image_dn = crop_offset(image_dn, (row_offs,), (col_offs,))
+        image_dn /= crop_offset(patch_cnt, (row_offs,), (col_offs,))
         return image_dn
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

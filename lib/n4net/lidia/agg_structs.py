@@ -45,7 +45,7 @@ class Aggregation0(nn.Module):
         x = x / wx
         xg = x
         # dnls.testing.data.save_burst(xg,"./output/tests/","gt_agg0")
-        print(x[0,0,:5,:5])
+        # print(x[0,0,:5,:5])
 
         # -- scatter --
         x = dnls.simple.scatter.run(x,_nlInds,ps,pt,dilation=1)
