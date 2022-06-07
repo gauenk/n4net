@@ -98,7 +98,6 @@ class BatchedLIDIA(nn.Module):
         dil = 2
         pad = ps//2 + dil*(ps//2)
         h1,w1 = h+2*pad,w+2*pad
-        # print(2*dil*(ps-1))
 
         # -- get coords for fill image: (top,left,btm,right) --
         hp,wp = h+2*(ps//2),w+2*(ps//2)
@@ -108,10 +107,6 @@ class BatchedLIDIA(nn.Module):
         coords1 = (hpad,wpad,hp+hpad,wp+wpad)
         vshape0 = (t,c,h0,w0)
         vshape1 = (t,c,h1,w1)
-        # print(coords0)
-        # print(coords1)
-        # print(vshape0)
-        # print(vshape1)
 
         #
         # -- First Step --
@@ -121,7 +116,7 @@ class BatchedLIDIA(nn.Module):
         t,c,h,w = noisy.shape
         nqueries = t * ((hp-1)//stride+1) * ((wp-1)//stride+1)
         if batch_size <= 0: batch_size = nqueries
-        batch_size = 128
+        # batch_size = 128
         # batch_size = nqueries//4
         # batch_size = nqueries//2
         nbatches = (nqueries - 1)//batch_size+1
@@ -154,8 +149,8 @@ class BatchedLIDIA(nn.Module):
         vid1 = vid1 / wvid1
 
         # -- normalize --
-        dnls.testing.data.save_burst(vid0,"./output/tests/","vid0")
-        dnls.testing.data.save_burst(vid1,"./output/tests/","vid1")
+        # dnls.testing.data.save_burst(vid0,"./output/tests/","vid0")
+        # dnls.testing.data.save_burst(vid1,"./output/tests/","vid1")
 
         # -- checks --
         assert th.any(th.isnan(vid0)).item() is False
@@ -169,6 +164,8 @@ class BatchedLIDIA(nn.Module):
         _hp,_wp = h+2*(ps-1),w+2*(ps-1)
         fold_nl = dnls.ifold.iFold((t,c,_hp,_wp),coords0,stride=1,dilation=1)
         wfold_nl = dnls.ifold.iFold((t,c,_hp,_wp),coords0,stride=1,dilation=1)
+        unfold0 = dnls.iunfold.iUnfold(ps,coords0,stride=1,dilation=1)
+        unfold1 = dnls.iunfold.iUnfold(ps,coords1,stride=1,dilation=2)
         scatter0 = p0_fxns.scatter
         scatter1 = p1_fxns.scatter
 
@@ -183,6 +180,8 @@ class BatchedLIDIA(nn.Module):
             batch_size = min(batch_size,nqueries - qindex)
             queries = dnls.utils.inds.get_query_batch(qindex,batch_size,
                                                       stride,t,hp,wp,device)
+            unfold0.qnum = batch_size
+            unfold1.qnum = batch_size
 
             #
             # -- Non-Local Search --
@@ -211,12 +210,8 @@ class BatchedLIDIA(nn.Module):
             #
 
             # -- reshape --
-            # patches0 = rearrange(patches0,'t h w k d -> t (h w) k d')
-            # patches1 = rearrange(patches1,'t h w k d -> t (h w) k d')
             dists0 = rearrange(dists0,'n k -> 1 n k')
             dists1 = rearrange(dists1,'n k -> 1 n k')
-            # inds0 = rearrange(inds0,'n k tr -> 1 n k tr')
-            # inds1 = rearrange(inds1,'n k tr -> 1 n k tr')
             inds0 = inds0[:,[0]]
             inds1 = inds1[:,[0]]
 
@@ -227,12 +222,12 @@ class BatchedLIDIA(nn.Module):
             assert th.any(th.isnan(inds1)).item() is False
 
             # -- for now --
-            # inds0 = qindex
-            # inds1 = qindex
+            inds0 = qindex
+            inds1 = qindex
 
             # -- exec --
-            outs = self.pdn.batched_fwd_b(patches0,dists0,inds0,vid0,scatter0,
-                                          patches1,dists1,inds1,vid1,scatter1)
+            outs = self.pdn.batched_fwd_b(patches0,dists0,inds0,vid0,unfold0,
+                                          patches1,dists1,inds1,vid1,unfold1)
             pdeno,patches_w = outs
 
             #

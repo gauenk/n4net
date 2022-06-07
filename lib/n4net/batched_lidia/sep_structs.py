@@ -10,39 +10,6 @@ import torch.nn as nn
 from .bn_structs import VerHorBnRe,VerHorMat
 from .agg_structs import Aggregation0,Aggregation1
 
-def handle_batch_norm(x,name,name2,module):
-    from easydict import EasyDict as edict
-    from einops import rearrange
-    images, patches, values = x.shape
-    xt = x.view(images * patches, values)
-    # xt = x.transpose(-2, -3)
-    # means = xt.mean(0)[None,:]
-    # stds = xt.std(0)[None,:]
-    # th.save(means,"means_fc_%s_%s" % (name,name2))
-    # th.save(stds,"std_fc_%s_%s" % (name,name2))
-    means = th.load("means_fc_%s_%s" % (name,name2))
-    stds = th.load("std_fc_%s_%s" % (name,name2))
-
-    # -- params --
-    params = edict()
-    for key,val in module.named_parameters():
-        # print(key,val.shape)
-        params[key] = rearrange(val,'k -> 1 k')
-
-    # -- exec bn --
-    eps = 1e-8
-    invsig = 1./th.pow(stds**2+eps,0.5)
-    # print("means.shape: ",means.shape)
-    # print("stds.shape: ",stds.shape)
-    # print("xt.shape: ",xt.shape)
-    x = (xt - means) * invsig * params.weight + params.bias
-    x = x.view(images, patches, values)
-    # images, patches, values = x.shape
-    # x = module(x.view(images * patches, values)).view(images, patches, values)
-
-    return x
-
-
 class FcNet(nn.Module):
     def __init__(self,name):
         super(FcNet, self).__init__()
@@ -59,9 +26,8 @@ class FcNet(nn.Module):
     def forward(self, x):
         for name, module in self._modules.items():
             if 'bn' in name:
-                x = handle_batch_norm(x,name,self.name,module)
-                # images, patches, values = x.shape
-                # x = module(x.view(images * patches, values)).view(images, patches, values)
+                images, patches, values = x.shape
+                x = module(x.view(images * patches, values)).view(images, patches, values)
             else:
                 x = module(x)
         return x
@@ -144,59 +110,27 @@ class SeparableFcNet(nn.Module):
                                         patch_numel=patch_numel, ver_size=ver_size)
 
     def run_batched_sep0_a(self,wpatches,inds,fold_nl,wfold_nl):
-        # wpatches = rearrange(wpatches,'1 (t m) k d -> t m k d',t=3) # testing
-        # print("A")
         x_out = self.sep_part1_s0(wpatches)
         y_out = self.agg0_pre(x_out)
-
-        # y_out = wpatches[:,:,[0]].contiguous() # for testing
-        # y_out = rearrange(y_out,'t m k d -> 1 (t m) k d').contiguous() # testing
         vid = self.agg0.batched_fwd_a(y_out, inds, fold_nl, wfold_nl)
-        # x_out = rearrange(x_out,'t m k d -> 1 (t m) k d') # testing
-
         return vid,x_out
 
     def run_batched_sep0_b(self,wpatches,vid,inds,scatter_nl):
-        # print("B")
-        # wpatches = rearrange(wpatches,'1 (t m) k d -> t m k d',t=3) # testing
         x_out = self.sep_part1_s0(wpatches)
-        # x_out = rearrange(x_out,'t m k d -> (t m) 1 k d') # testing
-
         y_out = self.agg0.batched_fwd_b(vid,inds,scatter_nl)
-
-        # y_out = rearrange(y_out,'(t m) 1 k d -> t m k d',t=3).contiguous() # testing
         y_out = self.agg0_post(y_out)
-        # y_out = rearrange(y_out,'t m k d -> (t m) 1 k d').contiguous() # testing
-
         return y_out,x_out
 
     def run_batched_sep1_a(self,wpatches,weights,inds,fold_nl,wfold_nl):
-
-        # print("weights.shape: ",weights.shape)
-        # wpatches = rearrange(wpatches,'1 (t m) k d -> t m k d',t=3) # testing
-        # weights = rearrange(weights,'1 (t m) k d -> t m k d',t=3) # testing
         x_out = self.sep_part1_s1(wpatches)
-        # print("x_out.shape: ",x_out.shape)
         y_out = self.agg1_pre(x_out) / weights
-        # y_out = rearrange(y_out,'t m k d -> 1 (t m) k d').contiguous() # testing
-
-        # y_out = wpatches[:,:,[0]].contiguous() # for testing
         vid = self.agg1.batched_fwd_a(y_out, inds, fold_nl, wfold_nl)
-        # x_out = rearrange(x_out,'t m k d -> 1 (t m) k d') # testing
-
         return vid,x_out
 
     def run_batched_sep1_b(self,wpatches,weights,vid,inds,scatter_nl):
         x_out = self.sep_part1_s1(wpatches)
-        # x_out = rearrange(x_out,'1 n k d -> n 1 k d')
-        # weights = rearrange(weights,'1 (t m) k d -> t m k d',t=3) # testing
-
         y_out = self.agg1.batched_fwd_b(vid,inds,scatter_nl)
-
-        # y_out = rearrange(y_out,'(t m) 1 k d -> t m k d',t=3)
         y_out = self.agg1_post(weights * y_out)
-        # y_out = rearrange(y_out,'t m k d -> (t m) 1 k d')
-
         return y_out,x_out
 
     def run_sep0(self,wpatches,dists,inds,h,w):
