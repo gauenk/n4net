@@ -16,12 +16,14 @@ import dnls
 def get_step_fxns(vshape,coords,ps,stride,dilation,device):
     pt,dil = 1,dilation
     scatter = dnls.scatter.ScatterNl(ps,pt,dilation=dil,exact=True)
-    fold_nl = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
-    wfold_nl = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
+    fold = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
+    wfold = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
+    unfold = dnls.iunfold.iUnfold(ps,coords,stride=1,dilation=dil)
     pfxns = edict()
     pfxns.scatter = scatter
-    pfxns.fold_nl = fold_nl
-    pfxns.wfold_nl = wfold_nl
+    pfxns.fold = fold
+    pfxns.wfold = wfold
+    pfxns.unfold = unfold
     return pfxns
 
 def select_sigma(sigma):

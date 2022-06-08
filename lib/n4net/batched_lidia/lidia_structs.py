@@ -37,7 +37,8 @@ class BatchedLIDIA(nn.Module):
         super(BatchedLIDIA, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
-        self.lidia_pad = lidia_pad
+        self.lidia_pad = False#lidia_pad
+        self.gpu_stats = True
 
         self.patch_w = 5 if arch_opt.rgb else 7
         self.ps = self.patch_w
@@ -102,6 +103,9 @@ class BatchedLIDIA(nn.Module):
             vshape_l = (t,c,h_l,w_l)
             pfxns[lname] = get_step_fxns(vshape_l,coords_l,ps,stride,dil,device)
 
+        # -- allocate final video  --
+        deno_folds = self.allocate_final(noisy.shape)
+
         #
         # -- First Processing --
         #
@@ -124,36 +128,23 @@ class BatchedLIDIA(nn.Module):
                                                       stride,t,hp,wp,device)
             # -- Process Each Level --
             for level in levels:
-                nn_fxn = levels[level]['nn_fxn']
-                pdn_fxn = levels[level]['pdn_fxn']
-                self.first_step(noisy,srch_img,pfxns[level],flows,sigma,
-                                ws,wt,qindex,queries,nn_fxn,pdn_fxn,train)
-
+                pfxns_l,params_l = pfxns[level],levels[level]
+                # -- Non-Local Search --
+                nn_info = params_l.nn_fxn(noisy,queries,pfxns_l.scatter,
+                                          srch_img,flows,train,ws=ws,wt=wt)
+                # -- Patch-based Denoising --
+                self.pdn.batched_step(nn_info,pfxns_l,params_l,level,qindex)
 
         #
         # -- Normalize Videos --
         #
 
         for level in levels:
-            vid = pfxns[level].fold_nl.vid
-            wvid = pfxns[level].wfold_nl.vid
+            vid = pfxns[level].fold.vid
+            wvid = pfxns[level].wfold.vid
             vid_z = vid / wvid
-            assert_nonan(vid)
-            assert_nonan(wvid)
-            assert_nonan(vid_z)
             levels[level]['vid'] = vid_z
-
-        # -- decl fxns --
-        pad = self.ps//2
-        coordsF = [0,0,hp,wp]
-        fold_nl = dnls.ifold.iFold((t,c,hp,wp),coordsF,stride=1,dilation=1)
-        wfold_nl = dnls.ifold.iFold((t,c,hp,wp),coordsF,stride=1,dilation=1)
-        unfold0 = dnls.iunfold.iUnfold(ps,pfxns.l0.fold_nl.coords,stride=1,dilation=1)
-        unfold1 = dnls.iunfold.iUnfold(ps,pfxns.l1.fold_nl.coords,stride=1,dilation=2)
-        scatter0 = pfxns.l0.scatter
-        scatter1 = pfxns.l1.scatter
-        vid0 = levels["l0"]['vid']
-        vid1 = levels["l1"]['vid']
+            del wvid
 
         # -- second step --
         for batch in range(nbatches):
@@ -166,72 +157,44 @@ class BatchedLIDIA(nn.Module):
             batch_size = min(batch_size,nqueries - qindex)
             queries = dnls.utils.inds.get_query_batch(qindex,batch_size,
                                                       stride,t,hp,wp,device)
-            unfold0.qnum = batch_size
-            unfold1.qnum = batch_size
 
             #
             # -- Non-Local Search --
             #
 
-            # -- [nn0 search]  --
-            output0 = self.run_nn0(noisy,queries,scatter0,srch_img,
+            nn_info = {}
+            for level in levels:
+                nn_fxn = levels[level]['nn_fxn']
+                scatter = pfxns[level].scatter
+                nn_info_l = nn_fxn(noisy,queries,scatter,srch_img,
                                    flows,train,ws=ws,wt=wt)
-            patches0 = output0[0]
-            dists0 = output0[1]
-            inds0 = output0[2]
-            params0 = output0[3]
-
-            # -- [nn1 search]  --
-            output1 = self.run_nn1(noisy,queries,scatter1,srch_img,
-                                   flows,train,ws=ws,wt=wt)
-            patches1 = output1[0]
-            dists1 = output1[1]
-            inds1 = output1[2]
-            params1 = output1[3]
+                nn_info[level] = nn_info_l
 
             #
-            # -- Patch-based Denoising --
+            # -- Patch Denoising --
             #
 
-            # -- reshape --
-            dists0 = rearrange(dists0,'n k -> 1 n k')
-            dists1 = rearrange(dists1,'n k -> 1 n k')
-            inds0 = inds0[:,[0]]
-            inds1 = inds1[:,[0]]
-
-            # -- checks --
-            assert th.any(th.isnan(patches0)).item() is False
-            assert th.any(th.isnan(patches1)).item() is False
-            assert th.any(th.isnan(inds0)).item() is False
-            assert th.any(th.isnan(inds1)).item() is False
-
-            # -- for now --
-            inds0 = qindex
-            inds1 = qindex
-
-            # -- exec --
-            outs = self.pdn.batched_fwd_b(patches0,dists0,inds0,vid0,unfold0,
-                                          patches1,dists1,inds1,vid1,unfold1)
-            pdeno,patches_w = outs
+            pdeno,wpatches = self.pdn.batched_fwd_b(levels,nn_info,pfxns,
+                                                    qindex,batch_size)
+            assert_nonan(pdeno)
+            assert_nonan(wpatches)
 
             #
             # -- Final Weight Aggregation --
             #
-            assert_nonan(pdeno)
-            assert_nonan(patches_w)
 
-            self.run_parts_final(pdeno,patches_w,inds0,params0,
-                                 qindex,fold_nl,wfold_nl)
+            self.run_parts_final(pdeno,wpatches,qindex,
+                                 deno_folds.img,deno_folds.wimg)
 
         #
         # -- Final Format --
         #
 
-        # -- unpack --
-        deno = self.final_format(fold_nl,wfold_nl)
+        # -- Unpack --
+        deno = self.final_format(deno_folds.img,deno_folds.wimg)
         assert_nonan(deno)
 
-        # -- normalize for output ---
+        # -- Normalize for output ---
         deno += means # normalize
         noisy += means # restore
         if rescale:
@@ -239,8 +202,17 @@ class BatchedLIDIA(nn.Module):
             noisy[...] = 255.*(noisy * 0.5 + 0.5) # restore
         return deno
 
-    def run_parts_final(self,image_dn,patch_weights,inds,params,
-                        qindex,fold_nl,wfold_nl):
+    def allocate_final(self,ishape):
+        t,c,h,w = ishape
+        pad = self.ps//2
+        hp,wp = h+2*pad,w+2*pad
+        coords = [0,0,hp,wp]
+        folds = edict()
+        folds.img = dnls.ifold.iFold((t,c,hp,wp),coords,stride=1,dilation=1)
+        folds.wimg = dnls.ifold.iFold((t,c,hp,wp),coords,stride=1,dilation=1)
+        return folds
+
+    def run_parts_final(self,image_dn,patch_weights,qindex,fold_nl,wfold_nl):
 
         # -- expands wpatches --
         pdim = image_dn.shape[-1]
@@ -273,38 +245,16 @@ class BatchedLIDIA(nn.Module):
 
     def get_levels(self):
         levels = {"l0":{"dil":1,
+                        "wdiv":False,
                         "nn_fxn":self.run_nn0,
                         "pdn_fxn":self.pdn.batched_fwd_a0},
                   "l1":{"dil":2,
+                        "wdiv":True,
                         "nn_fxn":self.run_nn1,
                         "pdn_fxn":self.pdn.batched_fwd_a1},
         }
+        levels = edict(levels)
         return levels
-
-    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-    #
-    #       One Level of First Step
-    #
-    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-    def first_step(self,noisy,srch_img,pfxns,flows,sigma,
-                   ws,wt,qindex,queries,nn_fxn,pdn_fxn,train):
-
-        # -- Non-Local Search --
-        output = nn_fxn(noisy,queries,pfxns.scatter,
-                        srch_img,flows,train,
-                        ws=ws,wt=wt)
-        patches = output[0]
-        dists = output[1]
-        inds = output[2]
-        params = output[3]
-
-        # -- Patch-based Denoising --
-        dists = rearrange(dists,'n k -> 1 n k')
-        inds = qindex
-        outs = pdn_fxn(patches,dists,inds,pfxns.fold_nl,pfxns.wfold_nl)
-
-        return outs
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #

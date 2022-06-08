@@ -3,6 +3,9 @@
 import torch as th
 from einops import rearrange,repeat
 
+# -- data mngmnt --
+from easydict import EasyDict as edict
+
 # -- diff. non-local search --
 import dnls
 
@@ -35,7 +38,7 @@ def run_nn0(self,image_n,queryInds,scatter_nl,
     device = image_n.device
     patch_numel = (self.patch_w ** 2) * image_n.shape[1]
 
-    # -- number of patches along (height,width) --
+    # -- nugber of patches along (height,width) --
     t,c,h,w = image_n.shape
     hp,wp = h+2*(ps//2),w+2*(ps//2)
 
@@ -44,6 +47,14 @@ def run_nn0(self,image_n,queryInds,scatter_nl,
     _,_,ha,wa = image_n0.shape
     sh,sw = (ha-hp)//2,(wa-wp)//2
     params = None
+
+    # -- print for testing --
+    if self.gpu_stats:
+        mem = th.cuda.empty_cache()
+        mem = th.cuda.memory_reserved(0)
+        # mem = th.cuda.memory_allocated(0)
+        mem_gb = mem / 1024**3
+        print("[NN0] GPU Mem (GB): ",mem_gb)
 
     # -- get search image --
     if not(srch_img is None):
@@ -88,7 +99,11 @@ def run_nn0(self,image_n,queryInds,scatter_nl,
     nlInds[...,1] -= sh
     nlInds[...,2] -= sw
 
-    return patches,nlDists,nlInds,params
+    # -- pack up --
+    info = edict()
+    info.patches = patches
+    info.dists = nlDists[None,:]
+    return info
 
 @register_method
 def run_nn1(self,image_n,queryInds,scatter_nl,
@@ -101,7 +116,7 @@ def run_nn1(self,image_n,queryInds,scatter_nl,
     device = image_n.device
     patch_numel = (self.patch_w ** 2) * image_n.shape[1]
 
-    # -- number of patches along (height,width) --
+    # -- nugber of patches along (height,width) --
     t,c,h,w = image_n.shape
     hp,wp = h+2*(ps//2),w+2*(ps//2)
 
@@ -126,6 +141,14 @@ def run_nn1(self,image_n,queryInds,scatter_nl,
     if detach_search:
         img_nn1 = img_nn1.detach()
 
+    # -- print for testing --
+    if self.gpu_stats:
+        mem = th.cuda.empty_cache()
+        mem = th.cuda.memory_reserved(0)
+        # mem = th.cuda.memory_allocated(0)
+        mem_gb = mem / 1024**3
+        print("[NN1] GPU Mem (GB): ",mem_gb)
+
     # -- inds offsets --
     t,c,h0,w0 = image_n1.shape
     queryInds[...,1] += sh
@@ -136,7 +159,6 @@ def run_nn1(self,image_n,queryInds,scatter_nl,
     nlDists,nlInds = dnls.simple.search.run(img_nn1,queryInds,flows,
                                             k,ps,pt,ws,wt,chnls,
                                             stride=2,dilation=2)
-
     # -- remove padding --
     queryInds[...,1] -= sh
     queryInds[...,2] -= sw
@@ -167,4 +189,8 @@ def run_nn1(self,image_n,queryInds,scatter_nl,
     nlInds[...,1] -= sh
     nlInds[...,2] -= sw
 
-    return patches,nlDists,nlInds,params
+    # -- pack up --
+    info = edict()
+    info.patches = patches
+    info.dists = nlDists[None,:]
+    return info

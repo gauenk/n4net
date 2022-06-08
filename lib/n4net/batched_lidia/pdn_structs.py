@@ -10,12 +10,16 @@ import torch.nn as nn
 # -- submodules --
 from .sep_structs import SeparableFcNet,FcNet
 
+# -- checking --
+from .misc import assert_nonan
+
 class PatchDenoiseNet(nn.Module):
     def __init__(self, arch_opt, patch_w, ver_size):
         super(PatchDenoiseNet, self).__init__()
 
         # -- options --
         self.arch_opt = arch_opt
+        self.gpu_stats = True
 
         # -- sep filters --
         self.sep_net = SeparableFcNet(arch_opt=arch_opt,
@@ -57,7 +61,7 @@ class PatchDenoiseNet(nn.Module):
         weights1 = weights1[:, :, 0:1, :]
         h,w = params1['pixels_h'],params1['pixels_w']
         agg1,sep1,_ = self.sep_net.run_sep1(wpatches1,weights1,dist1,inds1,h,w)
-        assert th.any(th.isnan(agg1)).item() is False
+        assert_nonan(agg1)
 
         #
         # -- Final Sep --
@@ -75,83 +79,115 @@ class PatchDenoiseNet(nn.Module):
         patch_weights = th.exp(-self.beta.abs() * patch_exp_weights)
         return patches_dn,patch_weights
 
-    def batched_fwd_a0(self,patches_n,dist,inds,fold_nl,wfold_nl):
+    def batched_fwd_a0(self,patches_n,dist,inds,fold,wfold,wdiv=False):
         weights = self.weights_net0(th.exp(-self.alpha0.abs() * dist))
         weights = weights.unsqueeze(-1)
         wpatches = patches_n * weights
-        vid,x_out = self.sep_net.run_batched_sep0_a(wpatches,inds,
-                                              fold_nl,wfold_nl)
+        weights = weights[:, :, 0:1, :]
+        vid,x_out = self.sep_net.run_batched_sep0_a(wpatches,weights,inds,
+                                                    fold,wfold,wdiv)
         return vid
 
-    def batched_fwd_a1(self,patches_n,dist,inds,fold_nl,wfold_nl):
+    def batched_fwd_a1(self,patches_n,dist,inds,fold,wfold,wdiv=True):
         weights = self.weights_net1(th.exp(-self.alpha1.abs() * dist))
         weights = weights.unsqueeze(-1)
         wpatches = patches_n * weights
         weights = weights[:, :, 0:1, :]
         vid,x_out = self.sep_net.run_batched_sep1_a(wpatches,weights,inds,
-                                                     fold_nl,wfold_nl)
+                                                     fold,wfold,wdiv)
         return vid
 
-    def batched_fwd_a(self,patches_n0,dist0,inds0,fold_nl0,wfold_nl0,
-                      patches_n1,dist1,inds1,fold_nl1,wfold_nl1):
+    def batched_step(self,nn_info,pfxns,params,level,qindex):
 
-        #
-        # -- Sep @ 0 --
-        #
+        # -- level info --
+        alphas = {"l0":self.alpha0,"l1":self.alpha1}
+        weight_nets = {"l0":self.weights_net0,"l1":self.weights_net1}
+        sep_nets = {"l0":self.sep_net.run_batched_sep0_a,
+                    "l1":self.sep_net.run_batched_sep1_a}
 
-        weights0 = self.weights_net0(th.exp(-self.alpha0.abs() * dist0))
-        weights0 = weights0.unsqueeze(-1)
-        wpatches0 = patches_n0 * weights0
-        vid0,sep0 = self.sep_net.run_batched_sep0_a(wpatches0,inds0,
-                                               fold_nl0,wfold_nl0)
+        # -- unpack --
+        alpha = alphas[level]
+        wnet = weight_nets[level]
+        sep_net = sep_nets[level]
+        patches = nn_info.patches
+        dists = nn_info.dists
+        wdiv = params.wdiv
 
-        #
-        # -- Sep @ 1 --
-        #
+        # -- forward --
+        weights = wnet(th.exp(-alpha.abs() * dists)).unsqueeze(-1)
+        wpatches = patches * weights
+        weights = weights[:, :, 0:1, :]
+        vid,x_out = sep_net(wpatches,weights,qindex,pfxns,wdiv)
+        # vid,x_out = self.sep_net.run_batched_sep1_a(wpatches,weights,inds,
+        #                                              fold,wfold,wdiv)
+        return vid,x_out
 
-        weights1 = self.weights_net1(th.exp(-self.alpha1.abs() * dist1))
-        weights1 = weights1.unsqueeze(-1)
-        wpatches1 = patches_n1 * weights1
-        weights1 = weights1[:, :, 0:1, :]
-        vid1 = self.sep_net.run_batched_sep1_a(patches_n1,weights1,inds1,
-                                               fold_nl1,wfold_nl1)
+    def batched_fwd_b(self,levels,nn_info,pfxns,qindex,bsize):
 
-        return vid0,vid1
+        # -- level info --
+        alphas = {"l0":self.alpha0,"l1":self.alpha1}
+        weight_nets = {"l0":self.weights_net0,"l1":self.weights_net1}
+        sep_nets = {"l0":self.sep_net.run_batched_sep0_b,
+                    "l1":self.sep_net.run_batched_sep1_b}
 
-    def batched_fwd_b(self,patches_n0,dist0,inds0,vid0,scatter_nl0,
-                      patches_n1,dist1,inds1,vid1,scatter_nl1):
 
-        #
-        # -- Sep @ 0 --
-        #
+        # -- iter each level --
+        grouped_sep,grouped_agg = [],[]
+        for level in nn_info.keys():
 
-        weights0 = self.weights_net0(th.exp(-self.alpha0.abs() * dist0))
-        weights0 = weights0.unsqueeze(-1)
-        wpatches0 = patches_n0 * weights0
-        agg0,sep0 = self.sep_net.run_batched_sep0_b(wpatches0,vid0,
-                                                    inds0,scatter_nl0)
-        #
-        # -- Sep @ 1 --
-        #
+            # -- unpack --
+            alpha = alphas[level]
+            wnet = weight_nets[level]
+            sep_net = sep_nets[level]
+            patches = nn_info[level].patches
+            dists = nn_info[level].dists
+            vid = levels[level].vid
+            unfold = pfxns[level].unfold
+            wdiv = levels[level].wdiv
 
-        weights1 = self.weights_net1(th.exp(-self.alpha1.abs() * dist1))
-        weights1 = weights1.unsqueeze(-1)
-        wpatches1 = patches_n1 * weights1
-        weights1 = weights1[:, :, 0:1, :]
-        agg1,sep1 = self.sep_net.run_batched_sep1_b(wpatches1,weights1,vid1,
-                                                    inds1,scatter_nl1)
+            # -- run --
+            weights = wnet(th.exp(-alpha.abs() * dists))
+            weights = weights.unsqueeze(-1)
+            wpatches = patches * weights
+            weights = weights[:, :, 0:1, :]
+            agg_l,sep_l = sep_net(wpatches,weights,vid,qindex,bsize,unfold,wdiv)
+            assert_nonan(agg_l)
+            assert_nonan(sep_l)
+            grouped_sep.append(sep_l)
+            grouped_agg.append(agg_l)
 
-        # -- check --
-        assert th.any(th.isnan(agg0)).item() is False
-        assert th.any(th.isnan(sep0)).item() is False
-        assert th.any(th.isnan(agg1)).item() is False
-        assert th.any(th.isnan(sep1)).item() is False
+            # -- save mem --
+            if level != "l0":
+                del patches,nn_info[level].patches
+            del nn_info[level].dists,dists
+            del weights,wpatches
 
-        #
-        # -- Final Sep --
-        #
+        # -- gpu info --
+        if self.gpu_stats:
+            th.cuda.synchronize()
+            th.cuda.empty_cache()
+            mem_gb = th.cuda.memory_reserved() / 1024**3
+            print("[PDN(b)] Reserved GPU Mem (GB): ",mem_gb)
+            mem_gb = th.cuda.memory_allocated() / 1024**3
+            print("[PDN(b)] Allocated GPU Mem (GB): ",mem_gb)
+            # print(th.cuda.memory_summary())
 
-        inputs = th.cat((sep0, sep1, agg0, agg1), dim=-2)
+        # -- cat --
+        patches_n0 = nn_info['l0'].patches
+        grouped = grouped_sep + grouped_agg
+        inputs = th.cat(grouped,dim=-2)
+        del grouped
+
+        # -- gpu info --
+        if self.gpu_stats:
+            th.cuda.synchronize()
+            th.cuda.empty_cache()
+            mem_gb = th.cuda.memory_reserved() / 1024**3
+            print("[PDN(b)] Reserved GPU Mem (GB): ",mem_gb)
+            mem_gb = th.cuda.memory_allocated() / 1024**3
+            print("[PDN(b)] Allocated GPU Mem (GB): ",mem_gb)
+            # print(th.cuda.memory_summary())
+
         noise = self.sep_net.sep_part2(inputs)
         deno,patches_w = self.run_batched_pdn_final(patches_n0,noise)
 

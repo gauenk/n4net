@@ -109,29 +109,52 @@ class SeparableFcNet(nn.Module):
         self.sep_part2 = SeparablePart2(arch_opt=arch_opt, hor_size_in=56,
                                         patch_numel=patch_numel, ver_size=ver_size)
 
-    def run_batched_sep0_a(self,wpatches,inds,fold_nl,wfold_nl):
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+    #
+    #           Split Sep Steps
+    #
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+    #
+    # -- Sep 0 --
+    #
+
+    def run_batched_sep0_a(self,wpatches,weights,qindex,pfxns,wdiv=False):
         x_out = self.sep_part1_s0(wpatches)
         y_out = self.agg0_pre(x_out)
-        vid = self.agg0.batched_fwd_a(y_out, inds, fold_nl, wfold_nl)
+        if wdiv: y_out /= weights
+        vid = self.agg0.batched_fwd_a(y_out, qindex, pfxns.fold, pfxns.wfold)
         return vid,x_out
 
-    def run_batched_sep0_b(self,wpatches,vid,inds,scatter_nl):
+    def run_batched_sep0_b(self,wpatches,weights,vid,qindex,bsize,unfold,wdiv=False):
         x_out = self.sep_part1_s0(wpatches)
-        y_out = self.agg0.batched_fwd_b(vid,inds,scatter_nl)
+        y_out = self.agg0.batched_fwd_b(vid,qindex,bsize,unfold)
         y_out = self.agg0_post(y_out)
         return y_out,x_out
 
-    def run_batched_sep1_a(self,wpatches,weights,inds,fold_nl,wfold_nl):
+    #
+    # -- Sep 1 --
+    #
+
+    def run_batched_sep1_a(self,wpatches,weights,qindex,pfxns,wdiv=True):
         x_out = self.sep_part1_s1(wpatches)
-        y_out = self.agg1_pre(x_out) / weights
-        vid = self.agg1.batched_fwd_a(y_out, inds, fold_nl, wfold_nl)
+        y_out = self.agg1_pre(x_out)
+        if wdiv: y_out /= weights
+        vid = self.agg1.batched_fwd_a(y_out, qindex, pfxns.fold, pfxns.wfold)
         return vid,x_out
 
-    def run_batched_sep1_b(self,wpatches,weights,vid,inds,scatter_nl):
+    def run_batched_sep1_b(self,wpatches,weights,vid,qindex,bsize,unfold,wdiv=True):
         x_out = self.sep_part1_s1(wpatches)
-        y_out = self.agg1.batched_fwd_b(vid,inds,scatter_nl)
-        y_out = self.agg1_post(weights * y_out)
+        y_out = self.agg1.batched_fwd_b(vid,qindex,bsize,unfold)
+        if wdiv: y_out = weights * y_out
+        y_out = self.agg1_post(y_out)
         return y_out,x_out
+
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+    #
+    #           Full Sep Steps
+    #
+    # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
     def run_sep0(self,wpatches,dists,inds,h,w):
         x = self.sep_part1_s0(wpatches)

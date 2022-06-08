@@ -29,9 +29,8 @@ class Aggregation0(nn.Module):
 
         return vid
 
-    def batched_fwd_b(self, vid, inds, scatter_nl):
-
-        y_out = scatter_nl(vid,inds,scatter_nl.qnum)
+    def batched_fwd_b(self, vid, qindex, bsize, unfold):
+        y_out = unfold(vid,qindex,bsize)
         y_out = rearrange(y_out,'n 1 pt c h w -> 1 n 1 (pt c h w)')
         return y_out
 
@@ -68,13 +67,13 @@ class Aggregation1(nn.Module):
 
         return vid
 
-    def batched_fwd_b(self, vid, inds, scatter_nl):
+    def batched_fwd_b(self, vid, qindex, bsize, unfold):
 
         # -- filter --
         t,c,h,w = vid.shape
         vid = nn_func.pad(vid, [1] * 4, 'reflect').view(t*c,1,h+2,w+2)
         vid = self.bilinear_conv(vid).view(t,c,h,w)
-        y_out = scatter_nl(vid,inds,scatter_nl.qnum)
+        y_out = unfold(vid,qindex,bsize)
         y_out = rearrange(y_out,'n 1 pt c h w -> 1 n 1 (pt c h w)')
         return y_out
 
