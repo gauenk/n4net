@@ -5,7 +5,7 @@ When first created our model is identical to lidia
 """
 
 # -- misc --
-import sys,tqdm
+import sys,tqdm,pytest
 from pathlib import Path
 
 # -- dict data --
@@ -47,125 +47,108 @@ if not SAVE_DIR.exists():
 
 #
 #
-# -- Primary Testing Class --
+# -- Test original LIDIA v.s. modular (n4net) LIDIA --
 #
 #
 
-class TestSameLidia(unittest.TestCase):
+@pytest.mark.skip()
+def test_same_lidia():
 
-    #
-    # -- Load Data --
-    #
+    # -- params --
+    sigma = 50.
+    device = "cuda:0"
+    ps = 5
+    vid_set = "toy"
+    vid_name = "text_tourbus"
 
-    def load_burst(self,name,ext="jpg"):
-        path = DATA_DIR / name
-        assert path.exists()
-        burst = []
-        for t in range(MAX_NFRAMES):
-            fn = path / ("%05d.%s" % (t,ext))
-            if not fn.exists(): break
-            img_t = Image.open(str(fn)).convert("RGB")
-            img_t = np.array(img_t)
-            img_t = rearrange(img_t,'h w c -> c h w')
-            burst.append(img_t)
-        if len(burst) == 0:
-            print(f"WARNING: no images loaded. Check ext [{ext}]")
-        burst = 1.*np.stack(burst)
-        burst = th.from_numpy(burst).type(th.float32)
-        return burst
+    # -- video --
+    vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
+    clean = data_hub.load_video(vid_cfg)[:3,:,:96,:128]
+    clean = th.from_numpy(clean).contiguous().to(device)
 
-    def skip_test_same_lidia(self):
+    # -- set seed --
+    seed = 123
+    th.manual_seed(seed)
+    np.random.seed(seed)
 
-        # -- params --
-        sigma = 50.
-        device = "cuda:0"
-        ps = 5
-        vid_set = "toy"
-        vid_name = "text_tourbus"
+    # -- over training --
+    for train in [True,False]:
 
-        # -- video --
-        vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
-        clean = data_hub.load_video(vid_cfg)[:3,:,:96,:128]
-        clean = th.from_numpy(clean).contiguous().to(device)
+        # -- get data --
+        noisy = clean + sigma * th.randn_like(clean)
+        im_shape = noisy.shape
 
-        # -- set seed --
-        seed = 123
-        th.manual_seed(seed)
-        np.random.seed(seed)
+        # -- lidia exec --
+        lidia_model = get_lidia_model_nl(device,im_shape,sigma)
+        deno_steps = lidia_model.run_parts(noisy,sigma,train=train)
+        deno_steps = deno_steps.detach()
 
-        # -- over training --
-        for train in [True,False]:
+        # -- n4net exec --
+        n4_model = n4net.lidia.load_model(sigma)
+        deno_n4 = n4_model(noisy,sigma,train=train)
+        deno_n4 = deno_n4.detach()
 
-            # -- get data --
-            noisy = clean + sigma * th.randn_like(clean)
-            im_shape = noisy.shape
+        # -- test --
+        error = th.sum((deno_n4 - deno_steps)**2).item()
+        assert error < 1e-10
+#
+#
+# -- Test modular (n4net) LIDIA [same as og] v.s. diffy (n4net) LIDIA --
+#
+#
 
-            # -- lidia exec --
-            lidia_model = get_lidia_model_nl(device,im_shape,sigma)
-            deno_steps = lidia_model.run_parts(noisy,sigma,train=train)
-            deno_steps = deno_steps.detach()
+def test_batched():
 
-            # -- n4net exec --
-            n4_model = n4net.lidia.load_model(sigma)
-            deno_n4 = n4_model(noisy,sigma,train=train)
-            deno_n4 = deno_n4.detach()
+    # -- params --
+    sigma = 50.
+    device = "cuda:0"
+    ps = 5
+    vid_set = "toy"
+    vid_name = "text_tourbus"
 
-            # -- test --
-            error = th.sum((deno_n4 - deno_steps)**2).item()
-            assert error < 1e-10
+    # -- video --
+    vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
+    clean = data_hub.load_video(vid_cfg)[:3,:,:96,:96]
+    clean = th.from_numpy(clean).contiguous().to(device)
 
-    def test_batched(self):
+    # -- set seed --
+    seed = 123
+    th.manual_seed(seed)
+    np.random.seed(seed)
 
-        # -- params --
-        sigma = 50.
-        device = "cuda:0"
-        ps = 5
-        vid_set = "toy"
-        vid_name = "text_tourbus"
+    # -- over training --
+    for train in [False]:#,False]:
 
-        # -- video --
-        vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
-        clean = data_hub.load_video(vid_cfg)[:3,:,:96,:96]
-        clean = th.from_numpy(clean).contiguous().to(device)
+        # -- get data --
+        noisy = clean + sigma * th.randn_like(clean)
+        im_shape = noisy.shape
+        noisy = noisy.contiguous()
 
-        # -- set seed --
-        seed = 123
-        th.manual_seed(seed)
-        np.random.seed(seed)
+        # -- lidia exec --
+        # lidia_model = get_lidia_model_nl(device,im_shape,sigma)
+        # deno_steps = lidia_model.run_parts(noisy,sigma,train=train)
+        # deno_steps = deno_steps.detach()
 
-        # -- over training --
-        for train in [False]:#,False]:
+        # -- n4net exec --
+        n4_model = n4net.lidia.load_model(sigma)
+        deno_steps = n4_model(noisy,sigma,train=train)
+        deno_steps = deno_steps.detach()/255.
 
-            # -- get data --
-            noisy = clean + sigma * th.randn_like(clean)
-            im_shape = noisy.shape
-            noisy = noisy.contiguous()
+        # -- n4net exec --
+        n4b_model = n4net.batched_lidia.load_model(sigma)
+        deno_n4 = n4b_model(noisy,sigma,train=train)
+        deno_n4 = deno_n4.detach()/255.
 
-            # -- lidia exec --
-            # lidia_model = get_lidia_model_nl(device,im_shape,sigma)
-            # deno_steps = lidia_model.run_parts(noisy,sigma,train=train)
-            # deno_steps = deno_steps.detach()
+        # -- save --
+        dnls.testing.data.save_burst(deno_n4,SAVE_DIR,"batched")
+        dnls.testing.data.save_burst(deno_steps,SAVE_DIR,"ref")
+        diff = th.abs(deno_steps - deno_n4)
+        diff /= diff.max()
+        dnls.testing.data.save_burst(diff,SAVE_DIR,"diff")
 
-            # -- n4net exec --
-            n4_model = n4net.lidia.load_model(sigma)
-            deno_steps = n4_model(noisy,sigma,train=train)
-            deno_steps = deno_steps.detach()/255.
-
-            # -- n4net exec --
-            n4b_model = n4net.batched_lidia.load_model(sigma)
-            deno_n4 = n4b_model(noisy,sigma,train=train)
-            deno_n4 = deno_n4.detach()/255.
-
-            # -- save --
-            dnls.testing.data.save_burst(deno_n4,SAVE_DIR,"batched")
-            dnls.testing.data.save_burst(deno_steps,SAVE_DIR,"ref")
-            diff = th.abs(deno_steps - deno_n4)
-            diff /= diff.max()
-            dnls.testing.data.save_burst(diff,SAVE_DIR,"diff")
-
-            # -- test --
-            error = th.sum((deno_n4 - deno_steps)**2).item()
-            print(error)
-            assert error < 1. # allow for batch-norm artifacts
+        # -- test --
+        error = th.sum((deno_n4 - deno_steps)**2).item()
+        print(error)
+        assert error < 3. # allow for batch-norm artifacts
 
 

@@ -59,14 +59,6 @@ class PatchDenoiseNet(nn.Module):
         agg1,sep1,_ = self.sep_net.run_sep1(wpatches1,weights1,dist1,inds1,h,w)
         assert th.any(th.isnan(agg1)).item() is False
 
-        # -- save --
-        # th.save(wpatches0,"gt_wp0.pt")
-        # th.save(wpatches1,"gt_wp1.pt")
-        # th.save(sep0,"gt_sep0.pt")
-        # th.save(agg0,"gt_agg0.pt")
-        # th.save(sep1,"gt_sep1.pt")
-        # th.save(agg1,"gt_agg1.pt")
-
         #
         # -- Final Sep --
         #

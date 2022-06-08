@@ -13,6 +13,7 @@ from .pdn_structs import PatchDenoiseNet
 import torch.nn as nn
 import torch.nn.functional as nn_func
 from torch.nn.functional import fold
+from torch.nn.functional import pad as nn_pad
 from torchvision.transforms.functional import center_crop
 
 # -- diff. non-local search --
@@ -20,22 +21,26 @@ import dnls
 
 # -- separate logic --
 from . import nn_impl
+from . import im_shapes
 
 # -- utils --
 from n4net.utils import clean_code
 
 # -- misc imports --
-from .misc import crop_offset,get_npatches,assert_nonan
+from .misc import crop_offset,get_npatches,assert_nonan,get_step_fxns
 
+@clean_code.add_methods_from(im_shapes)
 @clean_code.add_methods_from(nn_impl)
 class BatchedLIDIA(nn.Module):
 
-    def __init__(self, pad_offs, arch_opt):
+    def __init__(self, pad_offs, arch_opt, lidia_pad=True):
         super(BatchedLIDIA, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
+        self.lidia_pad = lidia_pad
 
         self.patch_w = 5 if arch_opt.rgb else 7
+        self.ps = self.patch_w
         self.neigh_pad = 14
         self.ver_size = 80 if arch_opt.rgb else 64
 
@@ -85,34 +90,23 @@ class BatchedLIDIA(nn.Module):
         device = noisy.device
         t,c,h,w = noisy.shape
         ps,pt = self.patch_w,1
-
-        # -- iparams --
-        i0_shape = self.image_n0_shape(noisy,train)
-        i1_shape = self.image_n1_shape(noisy,train)
-        _,_,h0,w0 = i0_shape
-        _,_,h1,w1 = i1_shape
-        _,_,h,w = noisy.shape
-        dil = 1
-        pad = ps//2 + dil*(ps//2)
-        h0,w0 = h+2*pad,w+2*pad
-        dil = 2
-        pad = ps//2 + dil*(ps//2)
-        h1,w1 = h+2*pad,w+2*pad
-
-        # -- get coords for fill image: (top,left,btm,right) --
         hp,wp = h+2*(ps//2),w+2*(ps//2)
-        hpad,wpad = (h0 - hp)//2,(w0 - wp)//2
-        coords0 = (hpad,wpad,hp+hpad,wp+wpad)
-        hpad,wpad = (h1 - hp)//2,(w1 - wp)//2
-        coords1 = (hpad,wpad,hp+hpad,wp+wpad)
-        vshape0 = (t,c,h0,w0)
-        vshape1 = (t,c,h1,w1)
+
+        # -- patch-based functions --
+        levels = self.get_levels()#{"l0":{"dil":1},"l1":{"dil":2}}
+        pfxns = edict()
+        for lname,params in levels.items():
+            dil = params['dil']
+            h_l,w_l,pad_l = self.image_shape((hp,wp),ps,dilation=dil)
+            coords_l = [pad_l,pad_l,hp+pad_l,hp+pad_l]
+            vshape_l = (t,c,h_l,w_l)
+            pfxns[lname] = get_step_fxns(vshape_l,coords_l,ps,stride,dil,device)
 
         #
-        # -- First Step --
+        # -- First Processing --
         #
 
-        # -- Loop Args --
+        # -- Loop Info --
         t,c,h,w = noisy.shape
         nqueries = t * ((hp-1)//stride+1) * ((wp-1)//stride+1)
         if batch_size <= 0: batch_size = nqueries
@@ -121,11 +115,6 @@ class BatchedLIDIA(nn.Module):
         # batch_size = nqueries//2
         nbatches = (nqueries - 1)//batch_size+1
 
-        # -- Scatter/Fold Fxns --
-        dil0,dil1 = 1,2
-        p0_fxns = self.get_patch_fxns(vshape0,coords0,stride,dil0,device)
-        p1_fxns = self.get_patch_fxns(vshape1,coords1,stride,dil1,device)
-
         for batch in range(nbatches):
 
             # -- Batching Inds --
@@ -133,41 +122,38 @@ class BatchedLIDIA(nn.Module):
             batch_size = min(batch_size,nqueries - qindex)
             queries = dnls.utils.inds.get_query_batch(qindex,batch_size,
                                                       stride,t,hp,wp,device)
-            # -- Level 0 --
-            vid0 = self.first_step(noisy,srch_img,p0_fxns,flows,sigma,
-                                   vshape0,ws,wt,qindex,queries,
-                                   self.run_nn0,self.pdn.batched_fwd_a0,train)
-            # -- Level 1 --
-            vid1 = self.first_step(noisy,srch_img,p1_fxns,flows,sigma,
-                                   vshape1,ws,wt,qindex,queries,
-                                   self.run_nn1,self.pdn.batched_fwd_a1,train)
+            # -- Process Each Level --
+            for level in levels:
+                nn_fxn = levels[level]['nn_fxn']
+                pdn_fxn = levels[level]['pdn_fxn']
+                self.first_step(noisy,srch_img,pfxns[level],flows,sigma,
+                                ws,wt,qindex,queries,nn_fxn,pdn_fxn,train)
 
-        # -- unpack --
-        vid0,wvid0 = p0_fxns.fold_nl.vid,p0_fxns.wfold_nl.vid
-        vid1,wvid1 = p1_fxns.fold_nl.vid,p1_fxns.wfold_nl.vid
-        vid0 = vid0 / wvid0
-        vid1 = vid1 / wvid1
 
-        # -- normalize --
-        # dnls.testing.data.save_burst(vid0,"./output/tests/","vid0")
-        # dnls.testing.data.save_burst(vid1,"./output/tests/","vid1")
+        #
+        # -- Normalize Videos --
+        #
 
-        # -- checks --
-        assert th.any(th.isnan(vid0)).item() is False
-        assert th.any(th.isnan(wvid0)).item() is False
-        assert th.any(th.isnan(vid1)).item() is False
-        assert th.any(th.isnan(wvid1)).item() is False
+        for level in levels:
+            vid = pfxns[level].fold_nl.vid
+            wvid = pfxns[level].wfold_nl.vid
+            vid_z = vid / wvid
+            assert_nonan(vid)
+            assert_nonan(wvid)
+            assert_nonan(vid_z)
+            levels[level]['vid'] = vid_z
 
         # -- decl fxns --
-        coords0 = [0,0,hp,wp]
-        coords0 = [2,2,hp+2,wp+2]
-        _hp,_wp = h+2*(ps-1),w+2*(ps-1)
-        fold_nl = dnls.ifold.iFold((t,c,_hp,_wp),coords0,stride=1,dilation=1)
-        wfold_nl = dnls.ifold.iFold((t,c,_hp,_wp),coords0,stride=1,dilation=1)
-        unfold0 = dnls.iunfold.iUnfold(ps,coords0,stride=1,dilation=1)
-        unfold1 = dnls.iunfold.iUnfold(ps,coords1,stride=1,dilation=2)
-        scatter0 = p0_fxns.scatter
-        scatter1 = p1_fxns.scatter
+        pad = self.ps//2
+        coordsF = [0,0,hp,wp]
+        fold_nl = dnls.ifold.iFold((t,c,hp,wp),coordsF,stride=1,dilation=1)
+        wfold_nl = dnls.ifold.iFold((t,c,hp,wp),coordsF,stride=1,dilation=1)
+        unfold0 = dnls.iunfold.iUnfold(ps,pfxns.l0.fold_nl.coords,stride=1,dilation=1)
+        unfold1 = dnls.iunfold.iUnfold(ps,pfxns.l1.fold_nl.coords,stride=1,dilation=2)
+        scatter0 = pfxns.l0.scatter
+        scatter1 = pfxns.l1.scatter
+        vid0 = levels["l0"]['vid']
+        vid1 = levels["l1"]['vid']
 
         # -- second step --
         for batch in range(nbatches):
@@ -188,18 +174,16 @@ class BatchedLIDIA(nn.Module):
             #
 
             # -- [nn0 search]  --
-            output0 = self.run_nn0(noisy,queries,scatter0,
-                                   srch_img,flows,train,
-                                   ws=ws,wt=wt)
+            output0 = self.run_nn0(noisy,queries,scatter0,srch_img,
+                                   flows,train,ws=ws,wt=wt)
             patches0 = output0[0]
             dists0 = output0[1]
             inds0 = output0[2]
             params0 = output0[3]
 
             # -- [nn1 search]  --
-            output1 = self.run_nn1(noisy,queries,scatter1,
-                                   srch_img,flows,train,
-                                   ws=ws,wt=wt)
+            output1 = self.run_nn1(noisy,queries,scatter1,srch_img,
+                                   flows,train,ws=ws,wt=wt)
             patches1 = output1[0]
             dists1 = output1[1]
             inds1 = output1[2]
@@ -240,12 +224,12 @@ class BatchedLIDIA(nn.Module):
                                  qindex,fold_nl,wfold_nl)
 
         #
-        # -- Format --
+        # -- Final Format --
         #
 
         # -- unpack --
-        deno = self.final_format(fold_nl,wfold_nl,_hp,_wp)
-        assert th.any(th.isnan(deno)).item() is False
+        deno = self.final_format(fold_nl,wfold_nl)
+        assert_nonan(deno)
 
         # -- normalize for output ---
         deno += means # normalize
@@ -274,26 +258,28 @@ class BatchedLIDIA(nn.Module):
         image_dn = image_dn.contiguous()
         wpatches = wpatches.contiguous()
 
-        # -- fold --
-        # h,w = params['pixels_h'],params['pixels_w']
-        # shape = (h,w)
-        # image_dn = fold(image_dn,shape,(ps,ps))
-        # patch_cnt = fold(wpatches,shape,(ps,ps))
-
         # -- dnls fold --
         image_dn = fold_nl(image_dn,qindex)
         patch_cnt = wfold_nl(wpatches,qindex)
 
-    def final_format(self,fold_nl,wfold_nl,hp,wp):
+    def final_format(self,fold_nl,wfold_nl):
         # -- crop --
-        ps = self.patch_w
+        pad = self.ps//2
         image_dn = fold_nl.vid
         patch_cnt = wfold_nl.vid
-        row_offs = min(ps - 1, hp - 1)
-        col_offs = min(ps - 1, wp - 1)
-        image_dn = crop_offset(image_dn, (row_offs,), (col_offs,))
-        image_dn /= crop_offset(patch_cnt, (row_offs,), (col_offs,))
+        image_dn = image_dn[:,:,pad:-pad,pad:-pad]
+        image_dn /= patch_cnt[:,:,pad:-pad,pad:-pad]
         return image_dn
+
+    def get_levels(self):
+        levels = {"l0":{"dil":1,
+                        "nn_fxn":self.run_nn0,
+                        "pdn_fxn":self.pdn.batched_fwd_a0},
+                  "l1":{"dil":2,
+                        "nn_fxn":self.run_nn1,
+                        "pdn_fxn":self.pdn.batched_fwd_a1},
+        }
+        return levels
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #
@@ -301,18 +287,7 @@ class BatchedLIDIA(nn.Module):
     #
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-    def get_patch_fxns(self,vshape,coords,stride,dilation,device):
-        ps,pt,dil = self.patch_w,1,dilation
-        scatter = dnls.scatter.ScatterNl(ps,pt,dilation=dil,exact=True)
-        fold_nl = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
-        wfold_nl = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
-        pfxns = edict()
-        pfxns.scatter = scatter
-        pfxns.fold_nl = fold_nl
-        pfxns.wfold_nl = wfold_nl
-        return pfxns
-
-    def first_step(self,noisy,srch_img,pfxns,flows,sigma,vshape,
+    def first_step(self,noisy,srch_img,pfxns,flows,sigma,
                    ws,wt,qindex,queries,nn_fxn,pdn_fxn,train):
 
         # -- Non-Local Search --
@@ -331,100 +306,50 @@ class BatchedLIDIA(nn.Module):
 
         return outs
 
-
-
-
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #
-    #           Padding & Cropping
+    #         Padding & Cropping
     #
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-    def pad_crop0(self, image, pad_offs, train):
-        return self._pad_crop0(image, pad_offs, train, self.patch_w)
+    # -- pad/crops --
+    def pad_crop0(self):
+        raise NotImplemented("")
 
-    @staticmethod
-    def _pad_crop0(image,pad_offs,train,patch_w):
-        if not train:
-            reflect_pad = [patch_w - 1] * 4
-            constant_pad = [14] * 4
-            image = nn_func.pad(nn_func.pad(image, reflect_pad, 'reflect'),
-                                constant_pad, 'constant', -1)
-        else:
-            image = crop_offset(image, (pad_offs,), (pad_offs,))
-        return image
+    def _pad_crop0_eff():
+        raise NotImplemented("")
 
-    def pad_crop1(self, image, train, mode):
-        return self._pad_crop1(image, train, mode, self.patch_w)
+    def _pad_crop0_og():
+        raise NotImplemented("")
 
-    @staticmethod
-    def _pad_crop1(image, train, mode, patch_w):
-        if not train:
-            if mode == 'reflect':
-                bilinear_pad = 1
-                averaging_pad = (patch_w - 1) // 2
-                patch_w_scale_1 = 2 * patch_w - 1
-                find_nn_pad = (patch_w_scale_1 - 1) // 2
-                reflect_pad = [averaging_pad + bilinear_pad + find_nn_pad] * 4
-                image = nn_func.pad(image, reflect_pad, 'reflect')
-            elif mode == 'constant':
-                constant_pad = [28] * 4
-                image = nn_func.pad(image, constant_pad, 'constant', -1)
-            else:
-                assert False
-        return image
+    def pad_crop1(self):
+        raise NotImplemented("")
 
-    def image_n0_shape(self,image_n,train,k=14):
-        pad_offs = self.pad_offs
-        ps = self.patch_w
+    def _pad_crop1(self):
+        raise NotImplemented("")
 
-        if not train:
-            reflect_pad = ps - 1
-            constant_pad = k
-            pad = reflect_pad + constant_pad
-            t,c,h,w = image_n.shape
-            hp = h + 2*pad
-            wp = w + 2*pad
-            return t,c,hp,wp
-        else:
-            t,c,h,w = image_n.shape
-            hp = h - pad_offs
-            wp = w - pad_offs
-            return t,c,hp,wp
+    # -- shapes --
+    def image_n0_shape(self):
+        raise NotImplemented("")
 
+    def image_n0_shape_og(self):
+        raise NotImplemented("")
 
-    def image_n1_shape(self,image_n,train,k=14):
-        patch_w = self.patch_w
-        if train:
-            t,c,h,w = image_n.shape
-            hp,wp = h-2,w-2
-            return t,c,h,w
-        else:
-            bilinear_pad = 1
-            averaging_pad = (patch_w - 1) // 2
-            patch_w_scale_1 = 2 * self.patch_w - 1
-            find_nn_pad = (patch_w_scale_1 - 1) // 2
-            constant_pad = 2*k
-            pad = averaging_pad + find_nn_pad + constant_pad
-            t,c,h,w = image_n.shape
-            hp,wp = h+2*pad,w+2*pad
-            return t,c,hp,wp
+    def image_n1_shape(self):
+        raise NotImplemented("")
 
-    def prepare_image_n1(self,image_n,train):
+    def image_n1_shape_og(self):
+        raise NotImplemented("")
 
-        # -- pad & unpack --
-        patch_numel = (self.patch_w ** 2) * image_n.shape[1]
-        device = image_n.device
-        image_n1 = self.pad_crop1(image_n, train, 'reflect')
-        im_n1_b, im_n1_c, im_n1_h, im_n1_w = image_n1.shape
+    # -- prepare --
+    def prepare_image_n1(self):
+        raise NotImplemented("")
 
-        # -- bilinear conv & crop --
-        # image_n1 = image_n1[:,:,1:-1,1:-1]
-        image_n1 = image_n1.view(im_n1_b * im_n1_c, 1,im_n1_h, im_n1_w)
-        image_n1 = self.bilinear_conv(image_n1)
-        image_n1 = image_n1.view(im_n1_b, im_n1_c, im_n1_h - 2, im_n1_w - 2)
-        image_n1 = self.pad_crop1(image_n1, train, 'constant')
-        return image_n1
+    def prepare_image_n1_eff(self):
+        raise NotImplemented("")
+
+    def prepare_image_n1_og(self):
+        raise NotImplemented("")
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #

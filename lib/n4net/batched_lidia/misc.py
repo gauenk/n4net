@@ -10,6 +10,20 @@ from easydict import EasyDict as edict
 # -- torchvision --
 import torchvision.transforms.functional as tvf
 
+# -- patch-based functions --
+import dnls
+
+def get_step_fxns(vshape,coords,ps,stride,dilation,device):
+    pt,dil = 1,dilation
+    scatter = dnls.scatter.ScatterNl(ps,pt,dilation=dil,exact=True)
+    fold_nl = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
+    wfold_nl = dnls.ifold.iFold(vshape,coords,stride=stride,dilation=dil)
+    pfxns = edict()
+    pfxns.scatter = scatter
+    pfxns.fold_nl = fold_nl
+    pfxns.wfold_nl = wfold_nl
+    return pfxns
+
 def select_sigma(sigma):
     sigmas = np.array([15, 25, 50])
     msigma = np.argmin((sigmas - sigma)**2)
