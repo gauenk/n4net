@@ -27,10 +27,11 @@ from .misc import crop_offset
 @clean_code.add_methods_from(nn_impl)
 class LIDIA(nn.Module):
 
-    def __init__(self, pad_offs, arch_opt):
+    def __init__(self, pad_offs, arch_opt, gpu_stats=False):
         super(LIDIA, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
+        self.gpu_stats = gpu_stats
 
         self.patch_w = 5 if arch_opt.rgb else 7
         self.ver_size = 80 if arch_opt.rgb else 64
@@ -49,7 +50,7 @@ class LIDIA(nn.Module):
         self.bilinear_conv.weight.requires_grad = False
 
         self.pdn = PatchDenoiseNet(arch_opt=arch_opt,patch_w=self.patch_w,
-                                   ver_size=self.ver_size)
+                                   ver_size=self.ver_size,gpu_stats=self.gpu_stats)
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #

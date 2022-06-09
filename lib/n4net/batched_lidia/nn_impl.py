@@ -49,12 +49,7 @@ def run_nn0(self,image_n,queryInds,scatter_nl,
     params = None
 
     # -- print for testing --
-    if self.gpu_stats:
-        mem = th.cuda.empty_cache()
-        mem = th.cuda.memory_reserved(0)
-        # mem = th.cuda.memory_allocated(0)
-        mem_gb = mem / 1024**3
-        print("[NN0] GPU Mem (GB): ",mem_gb)
+    self.print_gpu_stats("NN0")
 
     # -- get search image --
     if not(srch_img is None):
@@ -142,12 +137,7 @@ def run_nn1(self,image_n,queryInds,scatter_nl,
         img_nn1 = img_nn1.detach()
 
     # -- print for testing --
-    if self.gpu_stats:
-        mem = th.cuda.empty_cache()
-        mem = th.cuda.memory_reserved(0)
-        # mem = th.cuda.memory_allocated(0)
-        mem_gb = mem / 1024**3
-        print("[NN1] GPU Mem (GB): ",mem_gb)
+    self.print_gpu_stats("NN1")
 
     # -- inds offsets --
     t,c,h0,w0 = image_n1.shape

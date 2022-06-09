@@ -1,6 +1,7 @@
 
 
 # -- linalg --
+import torch as th
 import numpy as np
 
 # -- data mngmnt --
@@ -80,3 +81,15 @@ def get_image_params(image, patch_w, neigh_pad):
     im_params['pad_patches_w'] = image.shape[3] - (patch_w - 1)
     im_params['pad_patches'] = im_params['pad_patches_h'] * im_params['pad_patches_w']
     return im_params
+
+def print_gpu_stats(gpu_stats,name):
+    fmt_all = "[%s] Memory Allocated: %2.3f"
+    fmt_res = "[%s] Memory Reserved: %2.3f"
+    if gpu_stats:
+        th.cuda.empty_cache()
+        th.cuda.synchronize()
+        mem = th.cuda.memory_allocated() / 1024**3
+        print(fmt_all % (name,mem))
+        mem = th.cuda.memory_reserved() / 1024**3
+        print(fmt_res % (name,mem))
+

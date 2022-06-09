@@ -10,12 +10,15 @@ import torch.nn as nn
 # -- submodules --
 from .sep_structs import SeparableFcNet,FcNet
 
+from .misc import print_gpu_stats
+
 class PatchDenoiseNet(nn.Module):
-    def __init__(self, arch_opt, patch_w, ver_size):
+    def __init__(self, arch_opt, patch_w, ver_size, gpu_stats):
         super(PatchDenoiseNet, self).__init__()
 
         # -- options --
         self.arch_opt = arch_opt
+        self.gpu_stats = gpu_stats
 
         # -- sep filters --
         self.sep_net = SeparableFcNet(arch_opt=arch_opt,
@@ -46,6 +49,7 @@ class PatchDenoiseNet(nn.Module):
         wpatches0 = patches_n0 * weights0
         h,w = params0['pixels_h'],params0['pixels_w']
         agg0,sep0,_ = self.sep_net.run_sep0(wpatches0,dist0,inds0,h,w)
+        self.print_gpu_stats("Sep0")
 
         #
         # -- Sep @ 1 --
@@ -58,6 +62,7 @@ class PatchDenoiseNet(nn.Module):
         h,w = params1['pixels_h'],params1['pixels_w']
         agg1,sep1,_ = self.sep_net.run_sep1(wpatches1,weights1,dist1,inds1,h,w)
         assert th.any(th.isnan(agg1)).item() is False
+        self.print_gpu_stats("Sep1")
 
         #
         # -- Final Sep --
@@ -66,6 +71,7 @@ class PatchDenoiseNet(nn.Module):
         inputs = th.cat((sep0, sep1, agg0, agg1), dim=-2)
         noise = self.sep_net.sep_part2(inputs)
         deno,patches_w = self.run_pdn_final(patches_n0,noise)
+        self.print_gpu_stats("Final")
 
         return deno,patches_w
 
@@ -75,3 +81,6 @@ class PatchDenoiseNet(nn.Module):
         patch_exp_weights = (patches_no_mean ** 2).mean(dim=-1, keepdim=True)
         patch_weights = th.exp(-self.beta.abs() * patch_exp_weights)
         return patches_dn,patch_weights
+
+    def print_gpu_stats(self,name="-"):
+        print_gpu_stats(self.gpu_stats,name)

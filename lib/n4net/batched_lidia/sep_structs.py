@@ -79,9 +79,12 @@ class SeparablePart2(nn.Module):
 
 
 class SeparableFcNet(nn.Module):
-    def __init__(self, arch_opt, patch_w, ver_size):
+    def __init__(self, arch_opt, patch_w, ver_size, grad_sep_part1):
         super(SeparableFcNet, self).__init__()
         patch_numel = (patch_w ** 2) * 3 if arch_opt.rgb else patch_w ** 2
+
+        # -- grad parameters --
+        self.grad_sep_part1 = grad_sep_part1
 
         # -- sep nets [0 & 1] --
         self.sep_part1_s0 = SeparablePart1(arch_opt=arch_opt, hor_size=14,
@@ -128,6 +131,7 @@ class SeparableFcNet(nn.Module):
 
     def run_batched_sep0_b(self,wpatches,weights,vid,qindex,bsize,unfold,wdiv=False):
         x_out = self.sep_part1_s0(wpatches)
+        if self.grad_sep_part1: x_out = x_out.detach()
         y_out = self.agg0.batched_fwd_b(vid,qindex,bsize,unfold)
         y_out = self.agg0_post(y_out)
         return y_out,x_out
@@ -145,6 +149,7 @@ class SeparableFcNet(nn.Module):
 
     def run_batched_sep1_b(self,wpatches,weights,vid,qindex,bsize,unfold,wdiv=True):
         x_out = self.sep_part1_s1(wpatches)
+        if self.grad_sep_part1: x_out = x_out.detach()
         y_out = self.agg1.batched_fwd_b(vid,qindex,bsize,unfold)
         if wdiv: y_out = weights * y_out
         y_out = self.agg1_post(y_out)

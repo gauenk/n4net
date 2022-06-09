@@ -27,18 +27,22 @@ from . import im_shapes
 from n4net.utils import clean_code
 
 # -- misc imports --
-from .misc import crop_offset,get_npatches,assert_nonan,get_step_fxns
+from .misc import crop_offset,get_npatches,get_step_fxns,assert_nonan
+from n4net.utils.gpu_mem import print_gpu_stats,print_peak_gpu_stats
 
 @clean_code.add_methods_from(im_shapes)
 @clean_code.add_methods_from(nn_impl)
 class BatchedLIDIA(nn.Module):
 
-    def __init__(self, pad_offs, arch_opt, lidia_pad=True):
+    def __init__(self, pad_offs, arch_opt, lidia_pad=True, grad_sep_part1=False):
         super(BatchedLIDIA, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
-        self.lidia_pad = False#lidia_pad
-        self.gpu_stats = True
+
+        # -- modify changes --
+        self.lidia_pad = lidia_pad
+        self.grad_sep_part1 = True#grad_sep_part1
+        self.gpu_stats = False
 
         self.patch_w = 5 if arch_opt.rgb else 7
         self.ps = self.patch_w
@@ -59,7 +63,9 @@ class BatchedLIDIA(nn.Module):
         self.bilinear_conv.weight.requires_grad = False
 
         self.pdn = PatchDenoiseNet(arch_opt=arch_opt,patch_w=self.patch_w,
-                                   ver_size=self.ver_size)
+                                   ver_size=self.ver_size,
+                                   gpu_stats=self.gpu_stats,
+                                   grad_sep_part1=self.grad_sep_part1)
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #
@@ -80,6 +86,7 @@ class BatchedLIDIA(nn.Module):
         #
 
         # -- normalize for input ---
+        self.print_gpu_stats("Init")
         if rescale: noisy = (noisy/255. - 0.5)/0.5
         means = noisy.mean((-2,-1),True)
         noisy -= means
@@ -94,7 +101,7 @@ class BatchedLIDIA(nn.Module):
         hp,wp = h+2*(ps//2),w+2*(ps//2)
 
         # -- patch-based functions --
-        levels = self.get_levels()#{"l0":{"dil":1},"l1":{"dil":2}}
+        levels = self.get_levels()
         pfxns = edict()
         for lname,params in levels.items():
             dil = params['dil']
@@ -105,6 +112,7 @@ class BatchedLIDIA(nn.Module):
 
         # -- allocate final video  --
         deno_folds = self.allocate_final(noisy.shape)
+        self.print_gpu_stats("Alloc")
 
         #
         # -- First Processing --
@@ -159,7 +167,7 @@ class BatchedLIDIA(nn.Module):
                                                       stride,t,hp,wp,device)
 
             #
-            # -- Non-Local Search --
+            # -- Non-Local Search @ Each Level --
             #
 
             nn_info = {}
@@ -246,15 +254,16 @@ class BatchedLIDIA(nn.Module):
     def get_levels(self):
         levels = {"l0":{"dil":1,
                         "wdiv":False,
-                        "nn_fxn":self.run_nn0,
-                        "pdn_fxn":self.pdn.batched_fwd_a0},
+                        "nn_fxn":self.run_nn0},
                   "l1":{"dil":2,
                         "wdiv":True,
-                        "nn_fxn":self.run_nn1,
-                        "pdn_fxn":self.pdn.batched_fwd_a1},
+                        "nn_fxn":self.run_nn1},
         }
         levels = edict(levels)
         return levels
+
+    def print_gpu_stats(self,name="-"):
+        print_gpu_stats(self.gpu_stats,name)
 
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     #
