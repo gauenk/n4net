@@ -37,13 +37,14 @@ def get_default_config(sigma):
     cfg.seed = 123
     cfg.block_w = 64
     cfg.lr = 1e-3
-    cfg.epoch_num = 5
+    cfg.epoch_num = 2
+    cfg.epochs_between_check = 1
     cfg.dset_stride = 1
     cfg.train_batch_size = 4
     cfg.device = "cuda:0"
     return cfg
 
-def calc_padding_rgb(patch_w=5,k=14):
+def calc_padding(patch_w=5,k=14):
     bilinear_pad = 1
     averaging_pad = (patch_w - 1) // 2
     patch_w_scale_1 = 2 * patch_w - 1
@@ -53,7 +54,10 @@ def calc_padding_rgb(patch_w=5,k=14):
     offs = total_pad - total_pad0
     return offs,total_pad
 
-def calc_padding(arch_opt,k=14):
+def calc_padding_rgb(patch_w=5,k=14):
+    calc_padding_ps(patch_w,k)
+
+def calc_padding_arch(arch_opt,k=14):
     patch_w = 5 if arch_opt.rgb else 7
     bilinear_pad = 1
     averaging_pad = (patch_w - 1) // 2
@@ -83,12 +87,18 @@ def crop_offset(in_image, row_offs, col_offs):
         out_image = in_image
     return out_image
 
-def get_npatches(ishape, patch_w, neigh_pad):
+def get_npatches(ishape, train, ps, pad_offs, neigh_pad):
     batches = ishape[0]
-    pixels_h = ishape[2] - 2 * neigh_pad
-    pixels_w = ishape[3] - 2 * neigh_pad
-    patches_h = pixels_h - (patch_w - 1)
-    patches_w = pixels_w - (patch_w - 1)
+    if train:
+        pixels_h = ishape[2] - 2 * pad_offs - 2 * neigh_pad
+        pixels_w = ishape[3] - 2 * pad_offs - 2 * neigh_pad
+        patches_h = pixels_h - (ps - 1)
+        patches_w = pixels_w - (ps - 1)
+    else:
+        pixels_h = ishape[2]
+        pixels_w = ishape[3]
+        patches_h = pixels_h + 2*(ps//2)
+        patches_w = pixels_w + 2*(ps//2)
     return patches_h,patches_w
 
 def get_image_params(image, patch_w, neigh_pad):

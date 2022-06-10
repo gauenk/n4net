@@ -17,7 +17,7 @@ register_method = clean_code.register_method(__methods__)
 
 # -- helper imports --
 from n4net.utils.inds import get_3d_inds
-from .misc import get_image_params
+from .misc import get_image_params,crop_offset
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 #
@@ -26,7 +26,7 @@ from .misc import get_image_params
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 @register_method
-def image_shape(self, ishape, ps, dilation=1):
+def image_shape(self, ishape, ps, dilation=1, train=False):
     h,w = ishape
     pad = dilation*(ps//2)
     hp,wp = h+2*pad,w+2*pad
@@ -59,7 +59,7 @@ def _pad_crop0_og(sel,image,pad_offs,train,ps):
         image = nn_func.pad(nn_func.pad(image, reflect_pad, 'reflect'),
                             constant_pad, 'constant', -1)
     else:
-        image = crop_offset(image, (pad_offs,), (pad_offs,))
+        image = crop_offset(image, (pad_offs,), (pad_offs,)).contiguous()
     return image
 
 # @register_method

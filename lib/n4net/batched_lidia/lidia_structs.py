@@ -20,6 +20,7 @@ from torchvision.transforms.functional import center_crop
 import dnls
 
 # -- separate logic --
+from . import adapt
 from . import nn_impl
 from . import im_shapes
 
@@ -27,9 +28,11 @@ from . import im_shapes
 from n4net.utils import clean_code
 
 # -- misc imports --
+from .misc import calc_padding
 from .misc import crop_offset,get_npatches,get_step_fxns,assert_nonan
 from n4net.utils.gpu_mem import print_gpu_stats,print_peak_gpu_stats
 
+@clean_code.add_methods_from(adapt)
 @clean_code.add_methods_from(im_shapes)
 @clean_code.add_methods_from(nn_impl)
 class BatchedLIDIA(nn.Module):
@@ -46,7 +49,8 @@ class BatchedLIDIA(nn.Module):
 
         self.patch_w = 5 if arch_opt.rgb else 7
         self.ps = self.patch_w
-        self.neigh_pad = 14
+        self.k = 14
+        self.neigh_pad = self.k
         self.ver_size = 80 if arch_opt.rgb else 64
 
         self.rgb2gray = nn.Conv2d(in_channels=3, out_channels=1,
@@ -73,8 +77,8 @@ class BatchedLIDIA(nn.Module):
     #
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-    def forward(self, noisy, sigma, train=False, srch_img=None, flows=None,
-                rescale=True, ws=29, wt=0, stride=1, batch_size = -1):
+    def forward(self, noisy, sigma, srch_img=None, flows=None,
+                ws=29, wt=0, train=False, rescale=True, stride=1, batch_size = -1):
         """
 
         Primary Network Backbone
@@ -96,30 +100,34 @@ class BatchedLIDIA(nn.Module):
 
         # -- unpack --
         device = noisy.device
+        vshape = noisy.shape
         t,c,h,w = noisy.shape
         ps,pt = self.patch_w,1
-        hp,wp = h+2*(ps//2),w+2*(ps//2)
+
+        # -- get num of patches --
+        hp,wp = get_npatches(vshape, train, self.ps, self.pad_offs, self.k)
 
         # -- patch-based functions --
         levels = self.get_levels()
         pfxns = edict()
         for lname,params in levels.items():
             dil = params['dil']
-            h_l,w_l,pad_l = self.image_shape((hp,wp),ps,dilation=dil)
+            h_l,w_l,pad_l = self.image_shape((hp,wp),ps,dilation=dil,train=train)
             coords_l = [pad_l,pad_l,hp+pad_l,hp+pad_l]
             vshape_l = (t,c,h_l,w_l)
+            # print(f"{lname}: ",coords_l,vshape_l,h_l,w_l,pad_l)
             pfxns[lname] = get_step_fxns(vshape_l,coords_l,ps,stride,dil,device)
 
         # -- allocate final video  --
-        deno_folds = self.allocate_final(noisy.shape)
+        deno_folds = self.allocate_final(t,c,hp,wp)
         self.print_gpu_stats("Alloc")
+
 
         #
         # -- First Processing --
         #
 
         # -- Loop Info --
-        t,c,h,w = noisy.shape
         nqueries = t * ((hp-1)//stride+1) * ((wp-1)//stride+1)
         if batch_size <= 0: batch_size = nqueries
         # batch_size = 128
@@ -151,6 +159,7 @@ class BatchedLIDIA(nn.Module):
             vid = pfxns[level].fold.vid
             wvid = pfxns[level].wfold.vid
             vid_z = vid / wvid
+            assert_nonan(vid_z)
             levels[level]['vid'] = vid_z
             del wvid
 
@@ -210,10 +219,10 @@ class BatchedLIDIA(nn.Module):
             noisy[...] = 255.*(noisy * 0.5 + 0.5) # restore
         return deno
 
-    def allocate_final(self,ishape):
-        t,c,h,w = ishape
-        pad = self.ps//2
-        hp,wp = h+2*pad,w+2*pad
+    def allocate_final(self,t,c,hp,wp):
+        # t,c,h,w = ishape
+        # pad = self.ps//2
+        # hp,wp = h+2*pad,w+2*pad
         coords = [0,0,hp,wp]
         folds = edict()
         folds.img = dnls.ifold.iFold((t,c,hp,wp),coords,stride=1,dilation=1)

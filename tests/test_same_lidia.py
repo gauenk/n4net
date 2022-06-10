@@ -5,7 +5,7 @@ When first created our model is identical to lidia
 """
 
 # -- misc --
-import sys,tqdm,pytest
+import sys,tqdm,pytest,math,random
 from pathlib import Path
 
 # -- dict data --
@@ -45,6 +45,10 @@ DATA_DIR = Path("./data/")
 SAVE_DIR = Path("./output/tests/test_same_lidia/")
 if not SAVE_DIR.exists():
     SAVE_DIR.mkdir(parents=True)
+def set_seed(seed):
+    random.seed(seed)
+    th.manual_seed(seed)
+    np.random.seed(seed)
 
 #
 #
@@ -52,7 +56,7 @@ if not SAVE_DIR.exists():
 #
 #
 
-@pytest.mark.skip()
+# @pytest.mark.skip()
 def test_same_lidia():
 
     # -- params --
@@ -69,8 +73,7 @@ def test_same_lidia():
 
     # -- set seed --
     seed = 123
-    th.manual_seed(seed)
-    np.random.seed(seed)
+    set_seed(seed)
 
     # -- over training --
     for train in [True,False]:
@@ -98,7 +101,7 @@ def test_same_lidia():
 #
 #
 
-@pytest.mark.skip()
+# @pytest.mark.skip()
 def test_batched():
 
     # -- params --
@@ -108,12 +111,11 @@ def test_batched():
     vid_set = "toy"
     vid_name = "text_tourbus"
     gpu_stats = False
+    th.cuda.set_device(0)
 
     # -- set seed --
     seed = 123
-    th.manual_seed(seed)
-    np.random.seed(seed)
-    th.cuda.set_device(0)
+    set_seed(seed)
 
     # -- video --
     vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
@@ -125,7 +127,7 @@ def test_batched():
     print_peak_gpu_stats(gpu_stats,"Init.")
 
     # -- over training --
-    for train in [False]:#,False]:
+    for train in [True,False]:
 
         # -- get data --
         noisy = clean + sigma * th.randn_like(clean)
@@ -162,7 +164,8 @@ def test_batched():
 
         # -- test --
         error = th.sum((deno_n4 - deno_steps)**2).item()
-        assert error < 20. # allow for batch-norm artifacts
+        print(error)
+        assert error < 1e-6 # allow for batch-norm artifacts
 
         # -- gpu info --
         print_gpu_stats(gpu_stats,"final.")
@@ -174,6 +177,7 @@ def test_batched():
 #
 #
 
+# @pytest.mark.skip()
 def test_internal_adapt():
 
     # -- params --
@@ -183,50 +187,67 @@ def test_internal_adapt():
     vid_set = "toy"
     vid_name = "text_tourbus"
     gpu_stats = False
+    seed = 123
+    verbose = False
+    th.cuda.set_device(0)
 
     # -- set seed --
-    seed = 123
-    th.manual_seed(seed)
-    np.random.seed(seed)
-    th.cuda.set_device(0)
+    set_seed(seed)
 
     # -- video --
     vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
     clean = data_hub.load_video(vid_cfg)[:3,:,:128,:128]
     # clean = data_hub.load_video(vid_cfg)[:3,:,:96,:96]
     clean = th.from_numpy(clean).contiguous().to(device)
+    clean_01 = clean/255.
 
-    # -- over training --
-    for train in [False]:#,False]:
 
-        # -- get data --
-        noisy = clean + sigma * th.randn_like(clean)
-        im_shape = noisy.shape
-        noisy = noisy.contiguous()
+    # -- get data --
+    noisy = clean + sigma * th.randn_like(clean)
+    im_shape = noisy.shape
+    noisy = noisy.contiguous()
 
-        # -- n4net exec --
-        n4_model = n4net.lidia.load_model(sigma).to(device)
-        deno_steps = n4_model(noisy,sigma,train=train)
-        # with th.no_grad():
-        #     deno_steps = n4_model(noisy,sigma,train=train)
-        deno_steps = deno_steps.detach()/255.
+    # -- n4net exec --
+    set_seed(seed)
+    n4_model = n4net.lidia.load_model(sigma).to(device)
+    n4_model.run_internal_adapt(noisy,sigma)
+    deno_n4 = n4_model(noisy,sigma)
+    # with th.no_grad():
+    #     deno_n4 = n4_model(noisy,sigma)
+    deno_n4 = deno_n4.detach()/255.
 
-        # -- n4net exec --
-        n4b_model = n4net.batched_lidia.load_model(sigma).to(device)
-        deno_n4 = n4b_model(noisy,sigma,train=train)
-        print_gpu_stats(gpu_stats,"post-bL")
-        # with th.no_grad():
-        #     deno_n4 = n4b_model(noisy,sigma,train=train)
-        deno_n4 = deno_n4.detach()/255.
+    # -- n4net exec --
+    set_seed(seed)
+    n4b_model = n4net.batched_lidia.load_model(sigma).to(device)
+    n4b_model.run_internal_adapt(noisy,sigma)
+    deno_n4b = n4b_model(noisy,sigma)
+    # with th.no_grad():
+    #     deno_n4 = n4b_model(noisy,sigma,train=train)
+    deno_n4b = deno_n4b.detach()/255.
 
-        # -- save --
-        dnls.testing.data.save_burst(deno_n4,SAVE_DIR,"batched")
-        dnls.testing.data.save_burst(deno_steps,SAVE_DIR,"ref")
-        diff = th.abs(deno_steps - deno_n4)
-        diff /= diff.max()
-        dnls.testing.data.save_burst(diff,SAVE_DIR,"diff")
+    # -- save --
+    dnls.testing.data.save_burst(deno_n4,SAVE_DIR,"ref")
+    dnls.testing.data.save_burst(deno_n4b,SAVE_DIR,"batched")
+    diff = th.abs(deno_n4 - deno_n4b)
+    diff /= diff.max()
+    dnls.testing.data.save_burst(diff,SAVE_DIR,"diff")
 
-        # -- test --
-        error = th.sum((deno_n4 - deno_steps)**2).item()
-        print(error)
-        assert error < 20. # allow for batch-norm artifacts
+    # -- psnrs --
+    mse_n4 = th.mean((deno_n4 - clean_01)**2).item()
+    psnr_n4 = -10 * math.log10(mse_n4)
+    mse_n4b = th.mean((deno_n4b - clean_01)**2).item()
+    psnr_n4b = -10 * math.log10(mse_n4b)
+    if verbose:
+        print("PSNR[stnd]: %2.3f" % psnr_n4)
+        print("PSNR[batched]: %2.3f" % psnr_n4b)
+    error = np.sum((psnr_n4 - psnr_n4b)**2).item()
+    assert error < 1e-3
+
+    # -- test --
+    error = th.mean((deno_n4 - deno_n4b)**2).item()
+    print(error)
+    assert error < 1e-3 # allow for batch-norm artifacts
+    error = th.max((deno_n4 - deno_n4b)**2).item()
+    print(error)
+    assert error < 1e-2 # allow for batch-norm artifacts
+

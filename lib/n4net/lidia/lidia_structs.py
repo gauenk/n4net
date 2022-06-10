@@ -15,6 +15,7 @@ from torch.nn.functional import fold
 import dnls
 
 # -- separate logic --
+from . import adapt
 from . import nn_impl
 
 # -- utils --
@@ -24,6 +25,7 @@ from n4net.utils import clean_code
 from .misc import crop_offset
 
 
+@clean_code.add_methods_from(adapt)
 @clean_code.add_methods_from(nn_impl)
 class LIDIA(nn.Module):
 
@@ -58,8 +60,8 @@ class LIDIA(nn.Module):
     #
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-    def forward(self, noisy, sigma, train=False, srch_img=None, srch_flows=None,
-                rescale=True, ws=29, wt=0):
+    def forward(self, noisy, sigma, srch_img=None, srch_flows=None,
+                ws=29, wt=0, rescale=True, train=False):
         """
 
         Primary Network Backbone
@@ -74,8 +76,8 @@ class LIDIA(nn.Module):
         if rescale: noisy = (noisy/255. - 0.5)/0.5
         means = noisy.mean((-2,-1),True)
         noisy -= means
-        if srch_img is None:
-            srch_img = noisy
+        if srch_img is None: srch_img = noisy
+        else: srch_img = srch_img/255.
 
         #
         # -- Non-Local Search --
@@ -178,6 +180,7 @@ class LIDIA(nn.Module):
         image_dn = crop_offset(image_dn, (row_offs,), (col_offs,))
         image_dn /= crop_offset(patch_cnt, (row_offs,), (col_offs,))
         # print("[stnd-post] image_dn.shape: ",image_dn.shape)
+        # print("[stnd] image_dn.shape: ",image_dn.shape)
 
         return image_dn
 
@@ -199,6 +202,7 @@ class LIDIA(nn.Module):
                                 constant_pad, 'constant', -1)
         else:
             image = crop_offset(image, (pad_offs,), (pad_offs,))
+            # print("[pad_crop0] image.shape: ",image.shape)
         return image
 
     def pad_crop1(self, image, train, mode):

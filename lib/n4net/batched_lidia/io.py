@@ -21,7 +21,7 @@ def load_model(sigma):
     arch_cfg = ArchitectureOptions(True)
 
     # -- init model --
-    pad_offs, total_pad = calc_padding(arch_cfg)
+    pad_offs, total_pad = calc_padding()#arch_cfg)
     nl_denoiser = BatchedLIDIA(pad_offs, arch_cfg).to(cfg.device)
     nl_denoiser.cuda()
 

@@ -46,24 +46,6 @@ class PatchDenoiseNet(nn.Module):
         patch_weights = th.exp(-self.beta.abs() * patch_exp_weights)
         return patches_dn,patch_weights
 
-    # def batched_fwd_a0(self,patches_n,dist,inds,fold,wfold,wdiv=False):
-    #     weights = self.weights_net0(th.exp(-self.alpha0.abs() * dist))
-    #     weights = weights.unsqueeze(-1)
-    #     wpatches = patches_n * weights
-    #     weights = weights[:, :, 0:1, :]
-    #     vid,x_out = self.sep_net.run_batched_sep0_a(wpatches,weights,inds,
-    #                                                 fold,wfold,wdiv)
-    #     return vid
-
-    # def batched_fwd_a1(self,patches_n,dist,inds,fold,wfold,wdiv=True):
-    #     weights = self.weights_net1(th.exp(-self.alpha1.abs() * dist))
-    #     weights = weights.unsqueeze(-1)
-    #     wpatches = patches_n * weights
-    #     weights = weights[:, :, 0:1, :]
-    #     vid,x_out = self.sep_net.run_batched_sep1_a(wpatches,weights,inds,
-    #                                                  fold,wfold,wdiv)
-    #     return vid
-
     def batched_step(self,nn_info,pfxns,params,level,qindex):
 
         # -- level info --
@@ -109,8 +91,8 @@ class PatchDenoiseNet(nn.Module):
             patches = nn_info[level].patches
             dists = nn_info[level].dists
             vid = levels[level].vid
-            unfold = pfxns[level].unfold
             wdiv = levels[level].wdiv
+            unfold = pfxns[level].unfold
 
             # -- run --
             weights = wnet(th.exp(-alpha.abs() * dists))
