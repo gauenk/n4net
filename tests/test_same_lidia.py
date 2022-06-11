@@ -111,6 +111,8 @@ def test_batched():
     vid_set = "toy"
     vid_name = "text_tourbus"
     gpu_stats = False
+    verbose = True
+    batch_size = 1024
     th.cuda.set_device(0)
 
     # -- set seed --
@@ -119,7 +121,7 @@ def test_batched():
 
     # -- video --
     vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
-    clean = data_hub.load_video(vid_cfg)[:3,:,:128,:128]
+    clean = data_hub.load_video(vid_cfg)[:3,:,:96,:156]
     # clean = data_hub.load_video(vid_cfg)[:3,:,:96,:96]
     clean = th.from_numpy(clean).contiguous().to(device)
 
@@ -127,7 +129,7 @@ def test_batched():
     print_peak_gpu_stats(gpu_stats,"Init.")
 
     # -- over training --
-    for train in [True,False]:
+    for train in [False,True]:
 
         # -- get data --
         noisy = clean + sigma * th.randn_like(clean)
@@ -148,7 +150,7 @@ def test_batched():
 
         # -- n4net exec --
         n4b_model = n4net.batched_lidia.load_model(sigma).to(device)
-        deno_n4 = n4b_model(noisy,sigma,train=train)
+        deno_n4 = n4b_model(noisy,sigma,train=train,batch_size=batch_size)
         print_gpu_stats(gpu_stats,"post-Batched.")
         print_peak_gpu_stats(gpu_stats,"post-Batched.")
         # with th.no_grad():
@@ -162,10 +164,23 @@ def test_batched():
         diff /= diff.max()
         dnls.testing.data.save_burst(diff,SAVE_DIR,"diff")
 
-        # -- test --
-        error = th.sum((deno_n4 - deno_steps)**2).item()
-        print(error)
-        assert error < 1e-6 # allow for batch-norm artifacts
+        # -- test mse --
+        error = th.mean((deno_n4 - deno_steps)**2).item()
+        if train:
+            if batch_size == -1:
+                tol = 1e-14
+            else:
+                tol = 1e-3 # batch effects
+        else: # different on the edge
+            if batch_size == -1:
+                tol = 1e-4
+            else:
+                tol = 1e-3 # batch effects
+        if verbose:
+            print("Tain: ",train)
+            print("Error: ",error)
+            print("Tol: ",tol)
+        assert error < tol # allow for batch-norm artifacts
 
         # -- gpu info --
         print_gpu_stats(gpu_stats,"final.")

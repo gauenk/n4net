@@ -147,7 +147,7 @@ def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
                 msg = 'Epoch {} of {} done, training PSNR = {:.2f}'.format(a,b,c)
                 print(msg)
                 sys.stdout.flush()
-            if i > 10: break
+            if i > opt.max_batches: break
 
     return nl_denoiser
 

@@ -32,9 +32,10 @@ register_method = clean_code.register_method(__methods__)
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 @register_method
-def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0):
+def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0,
+                       batch_size = -1):
     noisy = (_noisy/255. - 0.5)/0.5
-    verbose = False
+    verbose = True
     opt = get_default_config(sigma)
     total_pad = 20
     nadapts = 1
@@ -44,10 +45,12 @@ def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0):
     else: _srch_img = noisy
 
     for astep in range(nadapts):
-        clean = self(noisy,sigma,_srch_img,flows=flows,rescale=False,ws=ws,wt=wt)
+        clean = self(noisy,sigma,_srch_img,flows=flows,rescale=False,
+                     ws=ws,wt=wt,batch_size=batch_size)
         clean = clean.detach().clamp(-1, 1)
         nl_denoiser = adapt_step(self, clean, _srch_img, flows, opt,
-                                 total_pad, ws=ws, wt=wt, verbose=verbose)
+                                 total_pad, ws=ws, wt=wt,
+                                 batch_size=batch_size, verbose=verbose)
 
 @register_method
 def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0):
@@ -73,7 +76,7 @@ def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0):
                                  total_pad, ws=ws,wt=wt, verbose=verbose)
 
 def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
-               ws=29, wt=0, verbose=False):
+               ws=29, wt=0, batch_size=-1, verbose=False):
 
     # -- optims --
     criterion = th.nn.MSELoss(reduction='mean')
@@ -113,7 +116,8 @@ def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
             # -- forward pass --
             optim.zero_grad()
             image_dn = nl_denoiser(noisy_i,opt.sigma,srch_i,flows=flows,
-                                   train=True,rescale=False,ws=ws,wt=wt)
+                                   ws=ws,wt=wt,train=True,rescale=False,
+                                   batch_size=batch_size)
 
             # -- post-process images --
             image_dn = image_dn.clamp(-1,1)
@@ -146,7 +150,7 @@ def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
                 msg = 'Epoch {} of {} done, training PSNR = {:.2f}'.format(a,b,c)
                 print(msg)
                 sys.stdout.flush()
-            if i > 10: break
+            if i > opt.max_batches: break
 
     return nl_denoiser
 

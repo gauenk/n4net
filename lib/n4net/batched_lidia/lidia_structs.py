@@ -37,15 +37,16 @@ from n4net.utils.gpu_mem import print_gpu_stats,print_peak_gpu_stats
 @clean_code.add_methods_from(nn_impl)
 class BatchedLIDIA(nn.Module):
 
-    def __init__(self, pad_offs, arch_opt, lidia_pad=True, grad_sep_part1=False):
+    def __init__(self, pad_offs, arch_opt, lidia_pad=False, grad_sep_part1=True):
         super(BatchedLIDIA, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
 
         # -- modify changes --
         self.lidia_pad = lidia_pad
-        self.grad_sep_part1 = True#grad_sep_part1
+        self.grad_sep_part1 = grad_sep_part1
         self.gpu_stats = False
+        self.verbose = True
 
         self.patch_w = 5 if arch_opt.rgb else 7
         self.ps = self.patch_w
@@ -113,7 +114,7 @@ class BatchedLIDIA(nn.Module):
         for lname,params in levels.items():
             dil = params['dil']
             h_l,w_l,pad_l = self.image_shape((hp,wp),ps,dilation=dil,train=train)
-            coords_l = [pad_l,pad_l,hp+pad_l,hp+pad_l]
+            coords_l = [pad_l,pad_l,hp+pad_l,wp+pad_l]
             vshape_l = (t,c,h_l,w_l)
             # print(f"{lname}: ",coords_l,vshape_l,h_l,w_l,pad_l)
             pfxns[lname] = get_step_fxns(vshape_l,coords_l,ps,stride,dil,device)
@@ -128,6 +129,7 @@ class BatchedLIDIA(nn.Module):
         #
 
         # -- Loop Info --
+        print("batch_size: ",batch_size)
         nqueries = t * ((hp-1)//stride+1) * ((wp-1)//stride+1)
         if batch_size <= 0: batch_size = nqueries
         # batch_size = 128
@@ -137,10 +139,13 @@ class BatchedLIDIA(nn.Module):
 
         for batch in range(nbatches):
 
+            # -- Info --
+            if self.verbose:
+                print("[Step0] Batch %d/%d" % (batch+1,nbatches))
             # -- Batching Inds --
             qindex = min(batch * batch_size,nqueries)
-            batch_size = min(batch_size,nqueries - qindex)
-            queries = dnls.utils.inds.get_query_batch(qindex,batch_size,
+            batch_size_i = min(batch_size,nqueries - qindex)
+            queries = dnls.utils.inds.get_query_batch(qindex,batch_size_i,
                                                       stride,t,hp,wp,device)
             # -- Process Each Level --
             for level in levels:
@@ -150,6 +155,9 @@ class BatchedLIDIA(nn.Module):
                                           srch_img,flows,train,ws=ws,wt=wt)
                 # -- Patch-based Denoising --
                 self.pdn.batched_step(nn_info,pfxns_l,params_l,level,qindex)
+
+            # -- [testing] num zeros --
+            wvid = pfxns[level].wfold.vid
 
         #
         # -- Normalize Videos --
@@ -166,13 +174,17 @@ class BatchedLIDIA(nn.Module):
         # -- second step --
         for batch in range(nbatches):
 
+            # -- Info --
+            if self.verbose:
+                print("[Step1] Batch %d/%d" % (batch+1,nbatches))
+
             #
             # -- Batching Inds --
             #
 
             qindex = min(batch * batch_size,nqueries)
-            batch_size = min(batch_size,nqueries - qindex)
-            queries = dnls.utils.inds.get_query_batch(qindex,batch_size,
+            batch_size_i = min(batch_size,nqueries - qindex)
+            queries = dnls.utils.inds.get_query_batch(qindex,batch_size_i,
                                                       stride,t,hp,wp,device)
 
             #
@@ -192,7 +204,7 @@ class BatchedLIDIA(nn.Module):
             #
 
             pdeno,wpatches = self.pdn.batched_fwd_b(levels,nn_info,pfxns,
-                                                    qindex,batch_size)
+                                                    qindex,batch_size_i)
             assert_nonan(pdeno)
             assert_nonan(wpatches)
 

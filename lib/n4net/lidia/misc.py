@@ -20,6 +20,7 @@ def get_default_config(sigma):
     cfg.lr = 1e-3
     cfg.epoch_num = 2
     cfg.epochs_between_check = 1
+    cfg.max_batches = 500
     cfg.dset_stride = 1
     cfg.train_batch_size = 4
     cfg.device = "cuda:0"
