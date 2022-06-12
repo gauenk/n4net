@@ -54,17 +54,19 @@ def run_exp(cfg):
     noisy_np = noisy.cpu().numpy()
     if cfg.comp_flow == "true":
         flows = svnlb.compute_flow(noisy_np,cfg.sigma)
+        flows = edict({k:v.to(device) for k,v in flows.items()})
     else:
         flows = None
 
     # -- internal adaptation --
     if cfg.internal_adapt_nsteps > 0:
         model.run_internal_adapt(noisy,cfg.sigma,flows=flows,
-                                 batch_size=batch_size,
+                                 ws=cfg.ws,wt=cfg.wt,batch_size=batch_size,
                                  nsteps=cfg.internal_adapt_nsteps,
                                  nepochs=cfg.internal_adapt_nepochs)
     # -- denoise --
-    deno = model(noisy,cfg.sigma,flows=flows,batch_size=batch_size)
+    deno = model(noisy,cfg.sigma,flows=flows,
+                 ws=cfg.ws,wt=cfg.wt,batch_size=batch_size)
 
     # -- save example --
     out_dir = Path(cfg.saved_dir) / str(cfg.uuid)
@@ -124,13 +126,14 @@ def main():
     sigmas = [10,30,50]
     internal_adapt_nsteps = [0,100]
     internal_adapt_nepochs = [2]
-    comp_flow = ["true"]
+    ws,wt = [29],[0]
+    comp_flow = ["false"]
     exp_lists = {"dname":dnames,"vid_name":vid_names,"sigma":sigmas,
                  "internal_adapt_nsteps":internal_adapt_nsteps,
                  "internal_adapt_nepochs":internal_adapt_nepochs,
-                 "comp_flow":comp_flow}
+                 "comp_flow":comp_flow,"ws":ws,"wt":wt}
     exps = cache_io.mesh_pydicts(exp_lists) # create mesh
-    pp.pprint(exps)
+    # pp.pprint(exps)
 
     # -- group with default --
     cfg = default_cfg()
