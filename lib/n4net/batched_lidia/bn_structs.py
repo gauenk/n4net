@@ -22,6 +22,11 @@ class VerHorBnRe(nn.Module):
         return x
 
 class VerHorMat(nn.Module):
+    """
+
+    x_out = W_1 x_i W_2 + B
+
+    """
     def __init__(self, ver_in, ver_out, hor_in, hor_out):
         super(VerHorMat, self).__init__()
         self.ver = nn.Linear(in_features=ver_in, out_features=ver_out, bias=False)

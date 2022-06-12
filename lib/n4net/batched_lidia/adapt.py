@@ -33,9 +33,8 @@ register_method = clean_code.register_method(__methods__)
 
 @register_method
 def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0,
-                       batch_size = -1):
+                       batch_size = -1, nsteps=100, nepochs=5, verbose=False):
     noisy = (_noisy/255. - 0.5)/0.5
-    verbose = True
     opt = get_default_config(sigma)
     total_pad = 20
     nadapts = 1
@@ -49,8 +48,8 @@ def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0,
                      ws=ws,wt=wt,batch_size=batch_size)
         clean = clean.detach().clamp(-1, 1)
         nl_denoiser = adapt_step(self, clean, _srch_img, flows, opt,
-                                 total_pad, ws=ws, wt=wt,
-                                 batch_size=batch_size, verbose=verbose)
+                                 total_pad, ws=ws, wt=wt, batch_size=batch_size,
+                                 nsteps=nsteps,nepochs=nepochs,verbose=verbose)
 
 @register_method
 def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0):
@@ -76,7 +75,7 @@ def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0):
                                  total_pad, ws=ws,wt=wt, verbose=verbose)
 
 def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
-               ws=29, wt=0, batch_size=-1, verbose=False):
+               ws=29, wt=0, nsteps=100, nepochs=5, batch_size=-1, verbose=False):
 
     # -- optims --
     criterion = th.nn.MSELoss(reduction='mean')
@@ -90,11 +89,11 @@ def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
     noisy = add_noise_to_image(clean, opt.sigma)
 
     # -- epoch --
-    for epoch in range(opt.epoch_num):
+    for epoch in range(nepochs):
 
         # -- info --
         if verbose:
-            print('Training epoch {} of {}'.format(epoch + 1, opt.epoch_num))
+            print('Training epoch {} of {}'.format(epoch + 1, nepochs))
 
         # -- garbage collect --
         sys.stdout.flush()
@@ -104,7 +103,7 @@ def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
         # -- loaders --
         device = next(nl_denoiser.parameters()).device
         iloader = enumerate(loader)
-        nsamples = len(loader)
+        nsamples = min(len(loader),nsteps)
         for i, (clean_i, srch_i) in iloader:
 
             # -- tenors on device --
@@ -146,11 +145,11 @@ def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
                 deno = deno.detach().clamp(-1, 1)
                 mse = criterion(deno / 2,clean / 2).item()
                 train_psnr = -10 * math.log10(mse)
-                a,b,c = epoch + 1, opt.epoch_num, train_psnr
+                a,b,c = epoch + 1, nepochs, train_psnr
                 msg = 'Epoch {} of {} done, training PSNR = {:.2f}'.format(a,b,c)
                 print(msg)
                 sys.stdout.flush()
-            if i > opt.max_batches: break
+            if i > nsteps: break
 
     return nl_denoiser
 

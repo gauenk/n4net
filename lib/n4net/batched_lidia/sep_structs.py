@@ -36,7 +36,8 @@ class SeparablePart1(nn.Module):
     def __init__(self, arch_opt, hor_size, patch_numel, ver_size,name=""):
         super(SeparablePart1, self).__init__()
 
-        self.ver_hor_bn_re0 = VerHorBnRe(ver_in=patch_numel, ver_out=ver_size, hor_in=14, hor_out=hor_size, bn=False)
+        self.ver_hor_bn_re0 = VerHorBnRe(ver_in=patch_numel, ver_out=ver_size,
+                                         hor_in=14, hor_out=hor_size, bn=False)
         self.a = nn.Parameter(th.tensor((0,), dtype=th.float32))
         self.ver_hor_bn_re1 = VerHorBnRe(ver_in=ver_size, ver_out=ver_size,
                                          hor_in=14, hor_out=hor_size, bn=True,
@@ -46,7 +47,6 @@ class SeparablePart1(nn.Module):
         x = self.ver_hor_bn_re0(x)
         if hasattr(self, 'ver_hor_bn_re1'):
             x = self.a * x + (1 - self.a) * self.ver_hor_bn_re1(x)
-
         return x
 
 class SeparablePart2(nn.Module):

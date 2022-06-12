@@ -37,7 +37,8 @@ from n4net.utils.gpu_mem import print_gpu_stats,print_peak_gpu_stats
 @clean_code.add_methods_from(nn_impl)
 class BatchedLIDIA(nn.Module):
 
-    def __init__(self, pad_offs, arch_opt, lidia_pad=False, grad_sep_part1=True):
+    def __init__(self, pad_offs, arch_opt, lidia_pad=False,
+                 grad_sep_part1=True,verbose=False):
         super(BatchedLIDIA, self).__init__()
         self.arch_opt = arch_opt
         self.pad_offs = pad_offs
@@ -46,7 +47,7 @@ class BatchedLIDIA(nn.Module):
         self.lidia_pad = lidia_pad
         self.grad_sep_part1 = grad_sep_part1
         self.gpu_stats = False
-        self.verbose = True
+        self.verbose = verbose
 
         self.patch_w = 5 if arch_opt.rgb else 7
         self.ps = self.patch_w
@@ -128,8 +129,8 @@ class BatchedLIDIA(nn.Module):
         # -- First Processing --
         #
 
-        # -- Loop Info --
-        print("batch_size: ",batch_size)
+        # -- Batching Info --
+        if self.verbose: print("batch_size: ",batch_size)
         nqueries = t * ((hp-1)//stride+1) * ((wp-1)//stride+1)
         if batch_size <= 0: batch_size = nqueries
         # batch_size = 128

@@ -16,6 +16,7 @@ import n4net
 # -- lightning module --
 import torch
 import pytorch_lightning as pl
+from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 class LitN4Net(pl.LightningModule):
@@ -77,6 +78,10 @@ def main():
     checkpoint_callback = ModelCheckpoint(monitor="val_loss",save_top_k=3,mode="max",
                                           dirpath=cfg.checkpoint_dir,
                                           filename="toy-{epoch:02d}-{val_loss:.2f}",)
+    # logger = CSVLogger("./","lightning_logs")
+    # trainer = pl.Trainer(gpus=1,precision=32,limit_train_batches=1.,
+    #                      max_epochs=3,log_every_n_steps=1,logger=logger,
+    #                      callbacks=[checkpoint_callback])
     trainer = pl.Trainer(gpus=1,precision=32,limit_train_batches=1.,
                          max_epochs=3,log_every_n_steps=1,
                          callbacks=[checkpoint_callback])
