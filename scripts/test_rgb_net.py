@@ -1,6 +1,6 @@
 
 # -- misc --
-import os,math
+import os,math,tqdm
 import pprint
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -33,68 +33,57 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 def run_exp(cfg):
 
-    # -- init results --
-    results = edict()
-    results.psnr = []
-    results.deno_fn = []
-    results.vid_group = []
-
     # -- data --
     data,loaders = data_hub.sets.load(cfg)
-    loader = iter(loaders.te)
+    index = data.te.groups.index(cfg.vid_name)
+    sample = data.te[index]
+
+    # -- unpack --
+    noisy,clean = sample['noisy'],sample['clean']
+    noisy,clean = noisy.to(cfg.device),clean.to(cfg.device)
 
     # -- network --
     model = n4net.batched_lidia.load_model(cfg.sigma).to(cfg.device)
     model.eval()
+    # -- size --
+    nframes = noisy.shape[0]
+    ngroups = int(25 * 37./nframes)
+    batch_size = ngroups*1024
 
-    # -- iterator over data --
-    for sample in loader:
+    # -- optical flow --
+    noisy_np = noisy.cpu().numpy()
+    if cfg.comp_flow == "true":
+        flows = svnlb.compute_flow(noisy_np,cfg.sigma)
+    else:
+        flows = None
 
-        # -- unpack --
-        noisy,clean = sample['noisy'][0],sample['clean'][0]
-        noisy,clean = noisy.to(cfg.device),clean.to(cfg.device)
+    # -- internal adaptation --
+    if cfg.internal_adapt_nsteps > 0:
+        model.run_internal_adapt(noisy,cfg.sigma,flows=flows,
+                                 batch_size=batch_size,
+                                 nsteps=cfg.internal_adapt_nsteps,
+                                 nepochs=cfg.internal_adapt_nepochs)
+    # -- denoise --
+    deno = model(noisy,cfg.sigma,flows=flows,batch_size=batch_size)
 
-        # -- size --
-        nframes = noisy.shape[0]
-        ngroups = int(25 * 37./nframes)
-        batch_size = ngroups*1024
+    # -- save example --
+    out_dir = Path(cfg.saved_dir) / str(cfg.uuid)
+    deno_fns = n4net.utils.io.save_burst(deno,out_dir,"deno")
 
-        # -- optical flow --
-        noisy_np = noisy.cpu().numpy()
-        if cfg.comp_flow:
-            flows = svnlb.compute_flow(noisy_np,cfg.sigma)
-        else:
-            flows = None
+    # -- psnr --
+    t = clean.shape[0]
+    deno = deno.detach()
+    clean_rs = clean.reshape((t,-1))/255.
+    deno_rs = deno.reshape((t,-1))/255.
+    mse = th.mean((clean_rs - deno_rs)**2,1)
+    psnrs = -10. * th.log10(mse).detach()
+    psnrs = list(psnrs.cpu().numpy())
 
-        # -- internal adaptation --
-        if cfg.internal_adapt_nsteps > 0:
-            model.run_internal_adapt(noisy,cfg.sigma,flows=flows,
-                                     batch_size=batch_size,
-                                     nsteps=cfg.internal_adapt_nsteps,
-                                     nepochs=cfg.internal_adapt_nepochs)
-        # -- denoise --
-        deno = model(noisy,cfg.sigma,flows=flows,batch_size=batch_size)
-
-        # -- save example --
-        out_dir = Path(cfg.saved_dir) / str(cfg.uuid)
-        deno_fns = n4net.utils.io.save_burst(deno,out_dir,"deno")
-
-        # -- psnr --
-        t = clean.shape[0]
-        deno = deno.detach()
-        clean_rs = clean.reshape((t,-1))/255.
-        deno_rs = deno.reshape((t,-1))/255.
-        mse = th.mean((clean_rs - deno_rs)**2,1)
-        psnrs = -10. * th.log10(mse).detach()
-        psnrs = list(psnrs.cpu().numpy())
-        print(psnrs)
-
-        # -- append --
-        vid_group = data.te.groups[sample['index'][0]]
-        results.deno_fn.append(deno_fns)
-        results.psnr.append(psnrs)
-        results.vid_group.append(vid_group)
-        print(results)
+    # -- init results --
+    results = edict()
+    results.psnrs = psnrs
+    results.deno_fn = deno_fns
+    results.vid_name = cfg.vid_name
 
     return results
 
@@ -110,7 +99,6 @@ def default_cfg():
     cfg.isize = None
     cfg.num_workers = 4
     cfg.device = "cuda:0"
-    cfg.comp_flow = False
     return cfg
 
 def main():
@@ -131,13 +119,18 @@ def main():
 
     # -- get mesh --
     dnames = ["set8"]
+    vid_names = ["snowboard","sunflower","tractor","hypersmooth",
+                 "motorbike","park_joy","rafting","touchdown"]
     sigmas = [10,30,50]
     internal_adapt_nsteps = [0,100]
     internal_adapt_nepochs = [2]
-    exp_lists = {"dname":dnames,"sigma":sigmas,
+    comp_flow = ["true"]
+    exp_lists = {"dname":dnames,"vid_name":vid_names,"sigma":sigmas,
                  "internal_adapt_nsteps":internal_adapt_nsteps,
-                 "internal_adapt_nepochs":internal_adapt_nepochs}
+                 "internal_adapt_nepochs":internal_adapt_nepochs,
+                 "comp_flow":comp_flow}
     exps = cache_io.mesh_pydicts(exp_lists) # create mesh
+    pp.pprint(exps)
 
     # -- group with default --
     cfg = default_cfg()
