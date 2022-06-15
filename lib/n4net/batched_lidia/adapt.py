@@ -34,6 +34,7 @@ register_method = clean_code.register_method(__methods__)
 @register_method
 def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0,
                        batch_size = -1, nsteps=100, nepochs=5, verbose=False):
+    if verbose: print("Running Internal Adaptation.")
     noisy = (_noisy/255. - 0.5)/0.5
     opt = get_default_config(sigma)
     total_pad = 20
@@ -44,18 +45,20 @@ def run_internal_adapt(self,_noisy,sigma,srch_img=None,flows=None,ws=29,wt=0,
     else: _srch_img = noisy
 
     for astep in range(nadapts):
-        clean = self(noisy,sigma,_srch_img,flows=flows,rescale=False,
-                     ws=ws,wt=wt,batch_size=batch_size)
+        with th.no_grad():
+            clean = self(noisy,sigma,_srch_img,flows=flows,rescale=False,
+                         ws=ws,wt=wt,batch_size=batch_size)
         clean = clean.detach().clamp(-1, 1)
         nl_denoiser = adapt_step(self, clean, _srch_img, flows, opt,
                                  total_pad, ws=ws, wt=wt, batch_size=batch_size,
                                  nsteps=nsteps,nepochs=nepochs,verbose=verbose)
 
 @register_method
-def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0):
+def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0,
+                       batch_size = -1, nsteps=100, nepochs=5, verbose=False):
 
+    if verbose: print("Running External Adaptation.")
     # -- setup --
-    verbose = False
     opt = get_default_config(sigma)
     total_pad = 10
     nadapts = 1
@@ -72,7 +75,8 @@ def run_external_adapt(self,_clean,sigma,srch_img=None,flows=None,ws=29,wt=0):
 
     for astep in range(nadapts):
         nl_denoiser = adapt_step(self, clean, _srch_img, flows, opt,
-                                 total_pad, ws=ws,wt=wt, verbose=verbose)
+                                 total_pad, ws=ws,wt=wt, batch_size=batch_size,
+                                 nsteps=nsteps,nepochs=nepochs,verbose=verbose)
 
 def adapt_step(nl_denoiser, clean, srch_img, flows, opt, total_pad,
                ws=29, wt=0, nsteps=100, nepochs=5, batch_size=-1, verbose=False):
