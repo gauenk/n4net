@@ -65,6 +65,8 @@ def test_same_lidia():
     ps = 5
     vid_set = "toy"
     vid_name = "text_tourbus"
+    # vid_set = "set8"
+    # vid_name = "motorbike"
 
     # -- video --
     vid_cfg = data_hub.get_video_cfg(vid_set,vid_name)
@@ -108,6 +110,8 @@ def test_batched():
     sigma = 50.
     device = "cuda:0"
     ps = 5
+    # vid_set = "set8"
+    # vid_name = "motorbike"
     vid_set = "toy"
     vid_name = "text_tourbus"
     gpu_stats = False
@@ -225,7 +229,7 @@ def test_internal_adapt():
     # -- n4net exec --
     set_seed(seed)
     n4_model = n4net.lidia.load_model(sigma).to(device)
-    n4_model.run_internal_adapt(noisy,sigma)
+    n4_model.run_internal_adapt(noisy,sigma,nsteps=10,nepochs=1)
     deno_n4 = n4_model(noisy,sigma)
     # with th.no_grad():
     #     deno_n4 = n4_model(noisy,sigma)
@@ -234,7 +238,7 @@ def test_internal_adapt():
     # -- n4net exec --
     set_seed(seed)
     n4b_model = n4net.batched_lidia.load_model(sigma).to(device)
-    n4b_model.run_internal_adapt(noisy,sigma)
+    n4b_model.run_internal_adapt(noisy,sigma,nsteps=10,nepochs=1)
     deno_n4b = n4b_model(noisy,sigma)
     # with th.no_grad():
     #     deno_n4 = n4b_model(noisy,sigma,train=train)
@@ -260,9 +264,7 @@ def test_internal_adapt():
 
     # -- test --
     error = th.mean((deno_n4 - deno_n4b)**2).item()
-    print(error)
     assert error < 1e-3 # allow for batch-norm artifacts
     error = th.max((deno_n4 - deno_n4b)**2).item()
-    print(error)
-    assert error < 1e-2 # allow for batch-norm artifacts
+    assert error < 2*1e-2 # allow for batch-norm artifacts
 
